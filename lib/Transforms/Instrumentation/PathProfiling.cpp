@@ -387,6 +387,7 @@ namespace llvm {
   typedef TypeBuilder<PathProfilingFunctionTable, true>
   ftEntryTypeBuilder;
 
+#ifndef NDEBUG
   // BallLarusEdge << operator overloading
   raw_ostream& operator<<(raw_ostream& os,
                           const BLInstrumentationEdge& edge) {
@@ -397,6 +398,7 @@ namespace llvm {
        << (edge.isCounterIncrement() ? "yes" : "no");
     return(os);
   }
+#endif
 }
 
 // Creates a new BLInstrumentationNode from a BasicBlock.
