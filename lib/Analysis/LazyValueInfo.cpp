@@ -267,6 +267,7 @@ public:
   
 } // end anonymous namespace.
 
+#ifndef NDEBUG
 namespace llvm {
 raw_ostream &operator<<(raw_ostream &OS, const LVILatticeVal &Val) {
   if (Val.isUndefined())
@@ -282,6 +283,7 @@ raw_ostream &operator<<(raw_ostream &OS, const LVILatticeVal &Val) {
   return OS << "constant<" << *Val.getConstant() << '>';
 }
 }
+#endif
 
 //===----------------------------------------------------------------------===//
 //                          LazyValueInfoCache Decl
