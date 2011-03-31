@@ -63,9 +63,9 @@ using namespace llvm::sys;
 
 static std::vector<void *> *OpenedHandles = 0;
 
+static SmartMutex<true> HandlesMutex;
 
 static SmartMutex<true>& getMutex() {
-  static SmartMutex<true> HandlesMutex;
   return HandlesMutex;
 }
 
