@@ -29,6 +29,7 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/SmallSet.h"
+#include <iostream>
 
 using namespace llvm;
 
@@ -1281,9 +1282,9 @@ HasNestArgument(const MachineFunction *MF) {
 }
 
 static unsigned
-GetScratchRegister(bool Is64Bit, const MachineFunction &MF) {
+GetScratchRegister(bool Is64Bit, const MachineFunction &MF, bool primary) {
   if (Is64Bit) {
-    return X86::R11;
+    return primary ? X86::R11 : X86::R12;
   } else {
     CallingConv::ID CallingConvention = MF.getFunction()->getCallingConv();
     bool IsNested = HasNestArgument(&MF);
@@ -1293,14 +1294,18 @@ GetScratchRegister(bool Is64Bit, const MachineFunction &MF) {
         report_fatal_error("Segmented stacks does not support fastcall with "
                            "nested function.");
         return -1;
+      } else if (!primary) {
+        report_fatal_error("Fastcall isn't supported with segmented stacks on "
+                           "32-bit x86 Darwin or Windows.");
+        return -1;
       } else {
         return X86::EAX;
       }
     } else {
       if (IsNested)
-        return X86::EDX;
+        return primary ? X86::EDX : X86::EAX;
       else
-        return X86::ECX;
+        return primary ? X86::ECX : X86::EAX;
     }
   }
 }
@@ -1316,14 +1321,12 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   DebugLoc DL;
   const X86Subtarget *ST = &MF.getTarget().getSubtarget<X86Subtarget>();
 
-  unsigned ScratchReg = GetScratchRegister(Is64Bit, MF);
+  unsigned ScratchReg = GetScratchRegister(Is64Bit, MF, true);
   assert(!MF.getRegInfo().isLiveIn(ScratchReg) &&
          "Scratch register is live-in");
 
   if (MF.getFunction()->isVarArg())
     report_fatal_error("Segmented stacks do not support vararg functions.");
-  if (!ST->isTargetLinux())
-    report_fatal_error("Segmented stacks supported only on linux.");
 
   MachineBasicBlock *allocMBB = MF.CreateMachineBasicBlock();
   MachineBasicBlock *checkMBB = MF.CreateMachineBasicBlock();
@@ -1365,22 +1368,47 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   StackSize = MFI->getStackSize();
 
   // Read the limit off the current stacklet off the stack_guard location.
-  if (Is64Bit) {
-    TlsReg = X86::FS;
-    TlsOffset = 0x70;
+  if (ST->isTargetLinux() || ST->isTargetDarwin()) {
+    if (Is64Bit) {
+      if (ST->isTargetLinux()) {
+        TlsReg = X86::FS;
+        TlsOffset = 0x70;
+      } else {
+        TlsReg = X86::GS;
+        TlsOffset = 0x60 + 90*8; // See pthread_machdep.h. Steal TLS slot 90.
+      }
 
-    BuildMI(checkMBB, DL, TII.get(X86::LEA64r), ScratchReg).addReg(X86::RSP)
-      .addImm(0).addReg(0).addImm(-StackSize).addReg(0);
-    BuildMI(checkMBB, DL, TII.get(X86::CMP64rm)).addReg(ScratchReg)
-      .addReg(0).addImm(0).addReg(0).addImm(TlsOffset).addReg(TlsReg);
+      BuildMI(checkMBB, DL, TII.get(X86::LEA64r), ScratchReg).addReg(X86::RSP)
+        .addImm(0).addReg(0).addImm(-StackSize).addReg(0);
+      BuildMI(checkMBB, DL, TII.get(X86::CMP64rm)).addReg(ScratchReg)
+        .addReg(0).addImm(0).addReg(0).addImm(TlsOffset).addReg(TlsReg);
+    } else {
+      TlsReg = X86::GS;
+
+      BuildMI(checkMBB, DL, TII.get(X86::LEA32r))
+        .addReg(ScratchReg)                     // dest
+        .addReg(X86::ESP).addImm(1).addReg(0)   // base, scale, index
+        .addImm(-StackSize)                     // disp
+        .addReg(0);
+
+      if (ST->isTargetLinux()) {
+        TlsOffset = 0x30;
+        BuildMI(checkMBB, DL, TII.get(X86::CMP32rm)).addReg(ScratchReg)
+          .addReg(0).addImm(0).addReg(0).addImm(TlsOffset).addReg(TlsReg);
+      } else {  // Darwin
+        TlsOffset = 0x48 + 90*4;
+        unsigned ScratchReg2 = GetScratchRegister(Is64Bit, MF, false);
+        BuildMI(checkMBB, DL, TII.get(X86::MOV32ri))
+          .addReg(ScratchReg2).addImm(TlsOffset);
+        BuildMI(checkMBB, DL, TII.get(X86::CMP32rm))
+          .addReg(ScratchReg)                       // LHS
+          .addReg(ScratchReg2).addImm(1).addReg(0)  // base, scale, index
+          .addImm(0)                                // disp
+          .addReg(TlsReg);                          // segment
+      }
+    }
   } else {
-    TlsReg = X86::GS;
-    TlsOffset = 0x30;
-
-    BuildMI(checkMBB, DL, TII.get(X86::LEA32r), ScratchReg).addReg(X86::ESP)
-      .addImm(0).addReg(0).addImm(-StackSize).addReg(0);
-    BuildMI(checkMBB, DL, TII.get(X86::CMP32rm)).addReg(ScratchReg)
-      .addReg(0).addImm(0).addReg(0).addImm(TlsOffset).addReg(TlsReg);
+    report_fatal_error("Segmented stacks supported only on Linux or Darwin.");
   }
 
   // This jump is taken if SP >= (Stacklet Limit + Stack Space required).
@@ -1389,6 +1417,7 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
 
   // On 32 bit we first push the arguments size and then the frame size. On 64
   // bit, we pass the stack frame size in r10 and the argument size in r11.
+  unsigned AlignAmount = ST->isTargetDarwin() ? 4 : 8;
   if (Is64Bit) {
     // Functions with nested arguments use R10, so it needs to be saved across
     // the call to _morestack
@@ -1405,7 +1434,7 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   } else {
     // Since we'll call __morestack, stack alignment needs to be preserved.
     BuildMI(allocMBB, DL, TII.get(X86::SUB32ri), X86::ESP).addReg(X86::ESP)
-      .addImm(8);
+      .addImm(AlignAmount);
     BuildMI(allocMBB, DL, TII.get(X86::PUSHi32))
       .addImm(X86FI->getArgumentStackSize());
     BuildMI(allocMBB, DL, TII.get(X86::PUSHi32))
@@ -1424,7 +1453,7 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // additional 8 bytes we added before pushing the arguments.
   if (!Is64Bit)
     BuildMI(allocMBB, DL, TII.get(X86::ADD32ri), X86::ESP).addReg(X86::ESP)
-      .addImm(8);
+      .addImm(AlignAmount);
   BuildMI(allocMBB, DL, TII.get(X86::RET));
 
   if (IsNested)
