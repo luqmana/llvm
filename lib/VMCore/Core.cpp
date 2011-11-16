@@ -382,12 +382,18 @@ LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef C)  {
 LLVMTypeRef LLVMLabelTypeInContext(LLVMContextRef C) {
   return wrap(Type::getLabelTy(*unwrap(C)));
 }
+LLVMTypeRef LLVMMetadataTypeInContext(LLVMContextRef C) {
+  return wrap(Type::getMetadataTy(*unwrap(C)));
+}
 
 LLVMTypeRef LLVMVoidType(void)  {
   return LLVMVoidTypeInContext(LLVMGetGlobalContext());
 }
 LLVMTypeRef LLVMLabelType(void) {
   return LLVMLabelTypeInContext(LLVMGetGlobalContext());
+}
+LLVMTypeRef LLVMMetadataType(void) {
+  return LLVMMetadataTypeInContext(LLVMGetGlobalContext());
 }
 
 /*===-- Operations on values ----------------------------------------------===*/

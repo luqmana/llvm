@@ -434,10 +434,12 @@ unsigned LLVMGetVectorSize(LLVMTypeRef VectorTy);
 LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef C);
 LLVMTypeRef LLVMLabelTypeInContext(LLVMContextRef C);
 LLVMTypeRef LLVMX86MMXTypeInContext(LLVMContextRef C);
+ LLVMTypeRef LLVMMetadataTypeInContext(LLVMContextRef C);
 
 LLVMTypeRef LLVMVoidType(void);
 LLVMTypeRef LLVMLabelType(void);
 LLVMTypeRef LLVMX86MMXType(void);
+LLVMTypeRef LLVMMetadataType(void);
 
 /*===-- Values ------------------------------------------------------------===*/
 
