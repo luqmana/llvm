@@ -971,11 +971,11 @@ void FrameEmitterImpl::EmitCFIInstruction(MCStreamer &Streamer,
     }
     return;
   }
-  case MCCFIInstruction::Remember:
+  case MCCFIInstruction::RememberState:
     if (VerboseAsm) Streamer.AddComment("DW_CFA_remember_state");
     Streamer.EmitIntValue(dwarf::DW_CFA_remember_state, 1);
     return;
-  case MCCFIInstruction::Restore:
+  case MCCFIInstruction::RestoreState:
     if (VerboseAsm) Streamer.AddComment("DW_CFA_restore_state");
     Streamer.EmitIntValue(dwarf::DW_CFA_restore_state, 1);
     return;
@@ -987,6 +987,12 @@ void FrameEmitterImpl::EmitCFIInstruction(MCStreamer &Streamer,
     Streamer.EmitULEB128IntValue(Reg);
     return;
   }
+  case MCCFIInstruction::Restore:
+    unsigned Reg = Instr.getDestination().getReg();
+    if (VerboseAsm) Streamer.AddComment("DW_CFA_restore");
+    if (VerboseAsm) Streamer.AddComment(Twine("Reg ") + Twine(Reg));
+    Streamer.EmitIntValue(dwarf::DW_CFA_restore | Reg, 1);
+    return;
   }
   llvm_unreachable("Unhandled case in switch");
 }

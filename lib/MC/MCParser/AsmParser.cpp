@@ -297,6 +297,8 @@ public:
       &GenericAsmParser::ParseDirectiveCFIRestoreState>(".cfi_restore_state");
     AddDirectiveHandler<
       &GenericAsmParser::ParseDirectiveCFISameValue>(".cfi_same_value");
+    AddDirectiveHandler<
+      &GenericAsmParser::ParseDirectiveCFIRestore>(".cfi_restore");
 
     // Macro directives.
     AddDirectiveHandler<&GenericAsmParser::ParseDirectiveMacrosOnOff>(
@@ -330,6 +332,7 @@ public:
   bool ParseDirectiveCFIRememberState(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveCFIRestoreState(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveCFISameValue(StringRef, SMLoc DirectiveLoc);
+  bool ParseDirectiveCFIRestore(StringRef, SMLoc DirectiveLoc);
 
   bool ParseDirectiveMacrosOnOff(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveMacro(StringRef, SMLoc DirectiveLoc);
@@ -2762,6 +2765,19 @@ bool GenericAsmParser::ParseDirectiveCFISameValue(StringRef IDVal,
     return true;
 
   getStreamer().EmitCFISameValue(Register);
+
+  return false;
+}
+
+/// ParseDirectiveCFIRestore
+/// ::= .cfi_restore register
+bool GenericAsmParser::ParseDirectiveCFIRestore(StringRef IDVal,
+						SMLoc DirectiveLoc) {
+  int64_t Register = 0;
+  if (ParseRegisterOrRegisterNumber(Register, DirectiveLoc))
+    return true;
+
+  getStreamer().EmitCFIRestore(Register);
 
   return false;
 }
