@@ -84,6 +84,10 @@ namespace TargetOpcode {
     /// used to copy between subregisters of virtual registers.
     COPY = 13,
 
+    /// GC_REG_ROOT - A mapping of the llvm.gcregroot intrinsic. This tracks
+    /// register roots throughout code generation.
+    GC_REG_ROOT = 14,
+
     /// BUNDLE - This instruction represents an instruction bundle. Instructions
     /// which immediately follow a BUNDLE instruction which are marked with
     /// 'InsideBundle' flag are inside the bundle.

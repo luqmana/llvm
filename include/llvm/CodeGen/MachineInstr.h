@@ -605,6 +605,7 @@ public:
   bool isEHLabel() const { return getOpcode() == TargetOpcode::EH_LABEL; }
   bool isGCLabel() const { return getOpcode() == TargetOpcode::GC_LABEL; }
   bool isDebugValue() const { return getOpcode() == TargetOpcode::DBG_VALUE; }
+  bool isGCRegRoot() const { return getOpcode() == TargetOpcode::GC_REG_ROOT; }
 
   bool isPHI() const { return getOpcode() == TargetOpcode::PHI; }
   bool isKill() const { return getOpcode() == TargetOpcode::KILL; }

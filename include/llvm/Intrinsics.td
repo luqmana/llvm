@@ -202,14 +202,17 @@ def int_vaend   : Intrinsic<[], [llvm_ptr_ty], [], "llvm.va_end">;
 
 //===------------------- Garbage Collection Intrinsics --------------------===//
 //
-def int_gcroot  : Intrinsic<[],
-                            [llvm_ptrptr_ty, llvm_ptr_ty]>;
-def int_gcread  : Intrinsic<[llvm_ptr_ty],
-                            [llvm_ptr_ty, llvm_ptrptr_ty],
-                            [IntrReadArgMem]>;
-def int_gcwrite : Intrinsic<[],
-                            [llvm_ptr_ty, llvm_ptr_ty, llvm_ptrptr_ty],
-                            [IntrReadWriteArgMem, NoCapture<1>, NoCapture<2>]>;
+def int_gcroot    : Intrinsic<[],
+                              [llvm_ptrptr_ty, llvm_ptr_ty]>;
+def int_gcregroot : Intrinsic<[],
+                              [llvm_ptr_ty]>;
+def int_gcread    : Intrinsic<[llvm_ptr_ty],
+                              [llvm_ptr_ty, llvm_ptrptr_ty],
+                              [IntrReadArgMem]>;
+def int_gcwrite   : Intrinsic<[],
+                              [llvm_ptr_ty, llvm_ptr_ty, llvm_ptrptr_ty],
+                              [IntrReadWriteArgMem, NoCapture<1>,
+                               NoCapture<2>]>;
 
 //===--------------------- Code Generator Intrinsics ----------------------===//
 //

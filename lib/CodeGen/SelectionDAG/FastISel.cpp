@@ -675,6 +675,17 @@ bool FastISel::SelectCall(const User *I) {
     UpdateValueMap(Call, ResultReg);
     return true;
   }
+  case Intrinsic::gcregroot: {
+    Value *Arg = Call->getArgOperand(1);
+    unsigned ResultReg = getRegForValue(Arg);
+    if (ResultReg == 0)
+      return false;
+    unsigned AddrSpace = cast<PointerType>(Arg->getType())->getAddressSpace();
+    const MCInstrDesc &II = TII.get(TargetOpcode::GC_REG_ROOT);
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, II)
+      .addReg(ResultReg).addImm(AddrSpace);
+    return true;
+  }
   }
 
   // Usually, it does not make sense to initialize a value,
