@@ -676,9 +676,7 @@ bool FastISel::SelectCall(const User *I) {
     return true;
   }
   case Intrinsic::gcregroot: {
-    Value *Arg = Call->getArgOperand(0);
-    printf("### Arg operand:\n");
-    Arg->dump();
+    Value *Arg = Call->getArgOperand(0)->stripPointerCasts();
     unsigned ResultReg = getRegForValue(Arg);
     if (ResultReg == 0)
       return false;

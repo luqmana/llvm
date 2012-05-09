@@ -22,6 +22,7 @@
 #include "llvm/CodeGen/LiveRangeEdit.h"
 #include "llvm/CodeGen/LiveStackAnalysis.h"
 #include "llvm/CodeGen/MachineDominators.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -1129,6 +1130,19 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
         DEBUG(dbgs() << "Removing debug info due to spill:" << "\t" << *MI);
         MI->eraseFromParent();
       }
+      continue;
+    }
+
+    if (MI->isGCRegRoot()) {
+      DEBUG(dbgs() << "Not spilling around GC reg root:" << "\t" << *MI);
+      MachineInstr *NewMI =
+        MF.CreateMachineInstr(TII.get(TargetOpcode::GC_REG_ROOT),
+                              MI->getDebugLoc(), true);
+      MachineInstrBuilder MIB(NewMI);
+      MIB.addImm(0).addImm(0);
+
+      LIS.ReplaceMachineInstrInMaps(MI, NewMI);
+      MI->eraseFromParent();
       continue;
     }
 

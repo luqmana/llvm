@@ -707,6 +707,8 @@ void AsmPrinter::EmitFunctionBody() {
         OS << '\t' << MAI->getCommentString() << "GC_REG_ROOT ";
         if (II->getOperand(0).isReg())
           OS << TM.getRegisterInfo()->getName(II->getOperand(0).getReg());
+        else
+          OS << "???";
         OS << ", " << II->getOperand(1).getImm();
         OutStreamer.EmitRawText(OS.str());
         break;

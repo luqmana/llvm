@@ -129,7 +129,8 @@ void VirtRegAuxInfo::CalculateWeightAndHint(LiveInterval &li) {
 
   for (MachineRegisterInfo::reg_iterator I = mri.reg_begin(li.reg);
        MachineInstr *mi = I.skipInstruction();) {
-    if (mi->isIdentityCopy() || mi->isImplicitDef() || mi->isDebugValue())
+    if (mi->isIdentityCopy() || mi->isImplicitDef() || mi->isDebugValue() ||
+        mi->isGCRegRoot())
       continue;
     if (!visited.insert(mi))
       continue;
