@@ -749,6 +749,12 @@ def COPY : Instruction {
   let neverHasSideEffects = 1;
   let isAsCheapAsAMove = 1;
 }
+def GC_REG_ROOT : Instruction {
+  let OutOperandList = (outs);
+  let InOperandList = (ins unknown:$src, i32imm:$addrspace);
+  let AsmString = "GC_REG_ROOT";
+  let isAsCheapAsAMove = 1;
+}
 def BUNDLE : Instruction {
   let OutOperandList = (outs);
   let InOperandList = (ins variable_ops);

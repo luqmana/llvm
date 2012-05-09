@@ -699,6 +699,18 @@ void AsmPrinter::EmitFunctionBody() {
       case TargetOpcode::KILL:
         if (isVerbose()) emitKill(II, *this);
         break;
+      case TargetOpcode::GC_REG_ROOT: {
+        if (!isVerbose())
+          break;
+        SmallString<128> Str;
+        raw_svector_ostream OS(Str);
+        OS << '\t' << MAI->getCommentString() << "GC_REG_ROOT ";
+        if (II->getOperand(0).isReg())
+          OS << TM.getRegisterInfo()->getName(II->getOperand(0).getReg());
+        OS << ", " << II->getOperand(1).getImm();
+        OutStreamer.EmitRawText(OS.str());
+        break;
+      }
       default:
         if (!TM.hasMCUseLoc())
           MCLineEntry::Make(&OutStreamer, getCurrentSection());

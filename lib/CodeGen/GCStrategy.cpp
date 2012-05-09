@@ -47,6 +47,7 @@ namespace {
     bool PerformDefaultLowering(Function &F, GCStrategy &Coll);
     static bool InsertRootInitializers(Function &F,
                                        AllocaInst **Roots, unsigned Count);
+    void InsertGCRegisterRoots(Function &F, GCStrategy &S);
 
   public:
     static char ID;
@@ -153,7 +154,7 @@ const char *LowerIntrinsics::getPassName() const {
 void LowerIntrinsics::getAnalysisUsage(AnalysisUsage &AU) const {
   FunctionPass::getAnalysisUsage(AU);
   AU.addRequired<GCModuleInfo>();
-  AU.addPreserved<DominatorTree>();
+  AU.addRequired<DominatorTree>();
 }
 
 /// doInitialization - If this module uses the GC intrinsics, find them now.
@@ -277,7 +278,83 @@ bool LowerIntrinsics::runOnFunction(Function &F) {
   return MadeChange;
 }
 
+void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
+  DominatorTree *DT = getAnalysisIfAvailable<DominatorTree>();
+  if (!DT)
+    return;
+
+  // Gather up all of the GC roots in the function.
+  SmallVector<Instruction *, 8> GCRoots;
+  for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
+    for (BasicBlock::iterator II = BBI->begin(),
+                              IE = BBI->end(); II != IE; ++II) {
+      if (isa<PointerType>(II->getType()) &&
+          cast<PointerType>(II->getType())->getAddressSpace() != 0) {
+        GCRoots.push_back(&*II);
+      }
+    }
+  }
+
+  // Now insert calls to llvm.gcregroot after calls.
+  Function *GCRegRootFn = Intrinsic::getDeclaration(F.getParent(),
+                                                    Intrinsic::gcregroot);
+  Type *PtrTy = Type::getInt8PtrTy(F.getParent()->getContext());
+  for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
+    for (BasicBlock::iterator II = BBI->begin(),
+                              IE = BBI->end(); II != IE; ++II) {
+      if (!isa<CallInst>(&*II) && !isa<InvokeInst>(&*II))
+        continue;
+
+      // Skip intrinsic calls. This prevents infinite loops.
+      if (isa<CallInst>(&*II)) {
+        Function *Fn = cast<CallInst>(&*II)->getCalledFunction();
+        if (Fn && Fn->isIntrinsic())
+          continue;
+      }
+
+      // Find all the live GC roots, and create gcregroot intrinsics for them.
+      //
+      // FIXME: Only considers dominance right now...
+      SmallVector<Instruction *, 8> GeneratedInsts;
+      for (SmallVector<Instruction *, 8>::iterator RI = GCRoots.begin(),
+                                                   RE = GCRoots.end();
+                                                   RI != RE; ++RI) {
+        if (!DT->dominates(*RI, &*II))
+          continue;
+
+        // Cast the value to an i8* to make a type-compatible intrinsic call.
+        Instruction *GCRegRootArg = new BitCastInst(*RI, PtrTy);
+        GeneratedInsts.push_back(GCRegRootArg);
+
+        // Create an intrinsic call.
+        Value *Args[1];
+        Args[0] = GCRegRootArg;
+        GeneratedInsts.push_back(CallInst::Create(GCRegRootFn, Args));
+      }
+
+      // Insert the gcregroot intrinsic calls after the call.
+      if (isa<CallInst>(&*II)) {
+        for (SmallVector<Instruction *, 8>::reverse_iterator CII =
+             GeneratedInsts.rbegin(), CIE = GeneratedInsts.rend();
+             CII != CIE; ++CII) {
+          (*CII)->insertAfter(&*II);
+        }
+      } else {  // Invoke instruction
+        BasicBlock *NormalDest = cast<InvokeInst>(&*II)->getNormalDest();
+        Instruction &InsertPt = NormalDest->front();
+        for (SmallVector<Instruction *, 8>::iterator CII =
+             GeneratedInsts.begin(), CIE = GeneratedInsts.end();
+             CII != CIE; ++CII) {
+          (*CII)->insertBefore(&InsertPt);
+        }
+      }
+    }
+  }
+}
+
 bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
+  InsertGCRegisterRoots(F, S);
+
   bool LowerWr = !S.customWriteBarrier();
   bool LowerRd = !S.customReadBarrier();
   bool InitRoots = S.initializeRoots();
