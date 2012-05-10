@@ -676,14 +676,7 @@ bool FastISel::SelectCall(const User *I) {
     return true;
   }
   case Intrinsic::gcregroot: {
-    Value *Arg = Call->getArgOperand(0)->stripPointerCasts();
-    unsigned ResultReg = getRegForValue(Arg);
-    if (ResultReg == 0)
-      return false;
-    unsigned AddrSpace = cast<PointerType>(Arg->getType())->getAddressSpace();
-    const MCInstrDesc &II = TII.get(TargetOpcode::GC_REG_ROOT);
-    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, II)
-      .addReg(ResultReg).addImm(AddrSpace);
+    // This is selected while selecting calls. We ignore it here.
     return true;
   }
   }

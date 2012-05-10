@@ -595,6 +595,22 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
   return true;
 }
 
+/// EmitGCRegRootComment - This method handles the target-independent form of
+/// GC_REG_ROOT, returning true if it was able to do so. A false return means
+/// the target will need to handle MI in EmitInstruction.
+static bool EmitGCRegRootComment(const MachineInstr *MI, AsmPrinter &AP) {
+  if (MI->getNumOperands() != 2)
+    return false;
+
+  SmallString<128> Str;
+  raw_svector_ostream OS(Str);
+  OS << '\t' << AP.MAI->getCommentString() << "GC_REG_ROOT ";
+  OS << AP.TM.getRegisterInfo()->getName(MI->getOperand(0).getReg());
+  OS << ", " << MI->getOperand(1).getImm();
+  AP.OutStreamer.EmitRawText(OS.str());
+  return true;
+}
+
 AsmPrinter::CFIMoveType AsmPrinter::needsCFIMoves() {
   if (MAI->getExceptionHandlingType() == ExceptionHandling::DwarfCFI &&
       MF->getFunction()->needsUnwindTableEntry())
@@ -700,17 +716,10 @@ void AsmPrinter::EmitFunctionBody() {
         if (isVerbose()) emitKill(II, *this);
         break;
       case TargetOpcode::GC_REG_ROOT: {
-        if (!isVerbose())
-          break;
-        SmallString<128> Str;
-        raw_svector_ostream OS(Str);
-        OS << '\t' << MAI->getCommentString() << "GC_REG_ROOT ";
-        if (II->getOperand(0).isReg())
-          OS << TM.getRegisterInfo()->getName(II->getOperand(0).getReg());
-        else
-          OS << "???";
-        OS << ", " << II->getOperand(1).getImm();
-        OutStreamer.EmitRawText(OS.str());
+        if (isVerbose()) {
+          if (!EmitGCRegRootComment(II, *this))
+            EmitInstruction(II);
+        }
         break;
       }
       default:

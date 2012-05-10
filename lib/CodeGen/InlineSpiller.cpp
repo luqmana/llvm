@@ -1133,19 +1133,6 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
       continue;
     }
 
-    if (MI->isGCRegRoot()) {
-      DEBUG(dbgs() << "Not spilling around GC reg root:" << "\t" << *MI);
-      MachineInstr *NewMI =
-        MF.CreateMachineInstr(TII.get(TargetOpcode::GC_REG_ROOT),
-                              MI->getDebugLoc(), true);
-      MachineInstrBuilder MIB(NewMI);
-      MIB.addImm(0).addImm(0);
-
-      LIS.ReplaceMachineInstrInMaps(MI, NewMI);
-      MI->eraseFromParent();
-      continue;
-    }
-
     // Ignore copies to/from snippets. We'll delete them.
     if (SnippetCopies.count(MI))
       continue;

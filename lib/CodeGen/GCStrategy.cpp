@@ -60,6 +60,14 @@ namespace {
     bool runOnFunction(Function &F);
   };
 
+  class GCMachineCodeFixup : public MachineFunctionPass {
+  public:
+    static char ID;
+
+    GCMachineCodeFixup();
+    void getAnalysisUsage(AnalysisUsage &AU) const;
+    bool runOnMachineFunction(MachineFunction &MF);
+  };
 
   /// GCMachineCodeAnalysis - This is a target-independent pass over the machine
   /// function representation to identify safe points for the garbage collector
@@ -406,6 +414,114 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
     MadeChange |= InsertRootInitializers(F, Roots.begin(), Roots.size());
 
   return MadeChange;
+}
+
+// -----------------------------------------------------------------------------
+
+char GCMachineCodeFixup::ID = 0;
+char &llvm::GCMachineCodeFixupID = GCMachineCodeFixup::ID;
+
+INITIALIZE_PASS(GCMachineCodeFixup, "gc-fixup",
+                "Fix Machine Code for Garbage Collection", false, false)
+
+GCMachineCodeFixup::GCMachineCodeFixup()
+  : MachineFunctionPass(ID) {}
+
+void GCMachineCodeFixup::getAnalysisUsage(AnalysisUsage &AU) const {
+  MachineFunctionPass::getAnalysisUsage(AU);
+  AU.setPreservesAll();
+}
+
+bool GCMachineCodeFixup::runOnMachineFunction(MachineFunction &MF) {
+  // Quick exit for functions that do not use GC.
+  if (!MF.getFunction()->hasGC())
+    return false;
+
+  const TargetMachine &TM = MF.getTarget();
+  const TargetInstrInfo *TII = TM.getInstrInfo();
+
+  for (MachineFunction::iterator MBBI = MF.begin(),
+                                 MBBE = MF.end(); MBBI != MBBE; ++MBBI) {
+    for (MachineBasicBlock::iterator MII = MBBI->begin(),
+                                     MIE = MBBI->end(); MII != MIE;) {
+      if (!MII->isGCRegRoot() || !MII->getOperand(0).isReg()) {
+        ++MII;
+        continue;
+      }
+
+      // Trace the register back to its location at the site of the call (either
+      // a physical reg or a frame index).
+      bool TracingReg = true;
+      unsigned TracedReg = MII->getOperand(0).getReg();
+      int FrameIndex;
+
+      MachineBasicBlock::iterator PrevII = MII;
+      for (--PrevII;; --PrevII) {
+        if (PrevII->isGCRegRoot() && PrevII->getOperand(0).isReg())
+          break;
+        if (PrevII->isCall())
+          break;
+
+        int FI;
+
+        // Trace back through register reloads.
+        unsigned Reg =
+          TM.getInstrInfo()->isLoadFromStackSlotPostFE(&*PrevII, FI);
+        if (Reg) {
+          // This is a reload. If we're tracing this register, start tracing the
+          // frame index instead.
+          if (TracingReg && TracedReg == Reg) {
+            TracingReg = false;
+            FrameIndex = FI;
+          }
+          continue;
+        }
+
+        // Trace back through spills.
+        if (TM.getInstrInfo()->isStoreToStackSlotPostFE(&*PrevII, FI))
+          continue;
+
+        // Trace back through register-to-register copies.
+        if (PrevII->isCopy()) {
+          if (TracingReg && TracedReg == PrevII->getOperand(0).getReg())
+            TracedReg = PrevII->getOperand(1).getReg();
+          continue;
+        }
+
+        // Trace back through non-register GC_REG_ROOT instructions.
+        if (PrevII->isGCRegRoot() && !PrevII->getOperand(0).isReg())
+          continue;
+
+        DEBUG(dbgs() << "Bad instruction: " << *PrevII);
+        llvm_unreachable("GC_REG_ROOT found in an unexpected location!");
+      }
+
+      // Now we've reached either a call or another GC_REG_ROOT instruction.
+      // Move the GC_REG_ROOT instruction we're considering to the right place,
+      // and rewrite it if necessary.
+      ++PrevII;
+      unsigned AddrSpace = MII->getOperand(1).getImm();
+      MachineInstr *NewMI;
+      if (TracingReg) {
+        MachineInstrBuilder MIB = BuildMI(MF, MII->getDebugLoc(),
+                                          TII->get(TargetOpcode::GC_REG_ROOT));
+        MIB.addReg(TracedReg).addImm(AddrSpace);
+        NewMI = MIB;
+      } else {
+        NewMI = TII->emitFrameIndexGCRegRoot(MF, FrameIndex, AddrSpace,
+                                             MII->getDebugLoc());
+      }
+
+      MBBI->insert(PrevII, NewMI);
+
+      MachineBasicBlock::iterator NextII = MII;
+      ++NextII;
+      MII->eraseFromParent();
+      MII = NextII;
+    }
+  }
+
+  return true;
 }
 
 // -----------------------------------------------------------------------------

@@ -143,6 +143,8 @@ private:
 
   bool TryEmitSmallMemcpy(X86AddressMode DestAM,
                           X86AddressMode SrcAM, uint64_t Len);
+
+  void SelectGCRegisterRoots(const CallInst *I);
 };
 
 } // end anonymous namespace.
@@ -1878,6 +1880,9 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
   for (unsigned i = 0, e = RegArgs.size(); i != e; ++i)
     MIB.addReg(RegArgs[i], RegState::Implicit);
 
+  // Add GC register root intrinsics.
+  SelectGCRegisterRoots(CI);
+
   // Issue CALLSEQ_END
   unsigned AdjStackUp = TII.getCallFrameDestroyOpcode();
   const unsigned NumBytesCallee = computeBytesPoppedByCallee(*Subtarget, CS);
@@ -2201,6 +2206,39 @@ bool X86FastISel::TryToFoldLoad(MachineInstr *MI, unsigned OpNo,
   FuncInfo.MBB->insert(FuncInfo.InsertPt, Result);
   MI->eraseFromParent();
   return true;
+}
+
+/// SelectGCRegisterRoots - Lowers the llvm.gcregroot intrinsics following a
+/// call.
+void X86FastISel::SelectGCRegisterRoots(const CallInst *I) {
+  // Quick exit for functions that don't use GC.
+  const BasicBlock *BB = I->getParent();
+  if (!BB->getParent()->hasGC())
+    return;
+
+  // Find the call instruction.
+  BasicBlock::const_iterator II = BB->begin();
+  while (&*II != I)
+    ++II;
+  ++II;   // Move right past the call.
+
+  // Translate all GC register roots.
+  for (BasicBlock::const_iterator IE = BB->end(); II != IE; ++II) {
+    if (isa<BitCastInst>(&*II))
+      continue;
+    if (!isa<IntrinsicInst>(&*II))
+      break;
+    const IntrinsicInst *Int = cast<IntrinsicInst>(&*II);
+    if (Int->getIntrinsicID() != Intrinsic::gcregroot)
+      break;
+
+    Value *Arg = Int->getArgOperand(0)->stripPointerCasts();
+    unsigned Reg = getRegForValue(Arg);
+    unsigned AddrSpace = cast<PointerType>(Arg->getType())->getAddressSpace();
+    const MCInstrDesc &II = TII.get(TargetOpcode::GC_REG_ROOT);
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, II)
+      .addReg(Reg).addImm(AddrSpace);
+  }
 }
 
 

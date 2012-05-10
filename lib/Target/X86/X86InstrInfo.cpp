@@ -3540,6 +3540,18 @@ X86InstrInfo::emitFrameIndexDebugValue(MachineFunction &MF,
   return &*MIB;
 }
 
+MachineInstr *X86InstrInfo::emitFrameIndexGCRegRoot(MachineFunction &MF,
+                                                    int FrameIx,
+                                                    unsigned AddrSpace,
+                                                    DebugLoc DL) const {
+  X86AddressMode AM;
+  AM.BaseType = X86AddressMode::FrameIndexBase;
+  AM.Base.FrameIndex = FrameIx;
+  MachineInstrBuilder MIB = BuildMI(MF, DL, get(X86::GC_REG_ROOT));
+  addFullAddress(MIB, AM).addImm(AddrSpace);
+  return &*MIB;
+}
+
 static MachineInstr *FuseTwoAddrInst(MachineFunction &MF, unsigned Opcode,
                                      const SmallVectorImpl<MachineOperand> &MOs,
                                      MachineInstr *MI,

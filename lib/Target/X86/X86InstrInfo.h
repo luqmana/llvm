@@ -268,6 +268,11 @@ public:
                                          const MDNode *MDPtr,
                                          DebugLoc DL) const;
 
+  virtual MachineInstr *emitFrameIndexGCRegRoot(MachineFunction &MF,
+                                                int FrameIx,
+                                                unsigned AddrSpace,
+                                                DebugLoc DL) const;
+
   /// foldMemoryOperand - If this target supports it, fold a load or store of
   /// the specified stack slot into the specified machine instruction for the
   /// specified operand(s).  If this is possible, the target should perform the

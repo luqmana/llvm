@@ -734,6 +734,16 @@ void X86AsmPrinter::PrintDebugValueComment(const MachineInstr *MI,
   printOperand(MI, NOps-2, O);
 }
 
+void X86AsmPrinter::PrintGCRegRootComment(const MachineInstr *MI,
+                                          raw_ostream &O) {
+  // Only the target-dependent form of GC_REG_ROOT should get here.
+  O << '\t' << MAI->getCommentString() << "GC_REG_ROOT [";
+  printOperand(MI, 0, O);
+  O << "+";
+  printOperand(MI, 3, O);
+  O << "], " << MI->getOperand(5).getImm();
+}
+
 
 
 //===----------------------------------------------------------------------===//

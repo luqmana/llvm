@@ -429,6 +429,10 @@ namespace llvm {
   ///
   FunctionPass *createGCLoweringPass();
 
+  /// GCMachineCodeFixup - Target-independent pass to move GC register roots
+  /// to call sites.
+  extern char &GCMachineCodeFixupID;
+
   /// GCMachineCodeAnalysis - Target-independent pass to mark safe points
   /// in machine code. Must be added very late during code generation, just
   /// prior to output, and importantly after all CFG transformations (such as

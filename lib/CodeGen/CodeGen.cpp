@@ -28,6 +28,7 @@ void llvm::initializeCodeGen(PassRegistry &Registry) {
   initializeExpandISelPseudosPass(Registry);
   initializeFinalizeMachineBundlesPass(Registry);
   initializeGCMachineCodeAnalysisPass(Registry);
+  initializeGCMachineCodeFixupPass(Registry);
   initializeGCModuleInfoPass(Registry);
   initializeIfConverterPass(Registry);
   initializeLiveDebugVariablesPass(Registry);

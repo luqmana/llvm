@@ -751,7 +751,7 @@ def COPY : Instruction {
 }
 def GC_REG_ROOT : Instruction {
   let OutOperandList = (outs);
-  let InOperandList = (ins unknown:$src, i32imm:$addrspace);
+  let InOperandList = (ins variable_ops);
   let AsmString = "GC_REG_ROOT";
   let isAsCheapAsAMove = 1;
 }

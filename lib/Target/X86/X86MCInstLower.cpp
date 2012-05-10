@@ -647,6 +647,15 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
     }
     return;
 
+  case TargetOpcode::GC_REG_ROOT:
+    if (isVerbose() && OutStreamer.hasRawTextSupport()) {
+      std::string TmpStr;
+      raw_string_ostream OS(TmpStr);
+      PrintGCRegRootComment(MI, OS);
+      OutStreamer.EmitRawText(StringRef(OS.str()));
+    }
+    return;
+
   // Emit nothing here but a comment if we can.
   case X86::Int_MemBarrier:
     if (OutStreamer.hasRawTextSupport())

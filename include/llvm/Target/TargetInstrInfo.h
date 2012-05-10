@@ -526,6 +526,22 @@ public:
     return 0;
   }
 
+  /// emitFrameIndexGCRegRoot - Emit a target-dependent form of
+  /// GC_REG_ROOT encoding the address of a frame index. As with DBG_VALUE,
+  /// addresses will normally be lowered the same way as other addresses on the
+  /// target; e.g. in load instructions. For targets that do not support this,
+  /// this function asserts.
+  /// If you add this for a target you should handle this GC_REG_ROOT in the
+  /// target-specific AsmPrinter code as well; if you don't, you'll see
+  /// comments like "GC_REG_ROOT ???" showing up in verbose assembly output.
+  virtual MachineInstr *emitFrameIndexGCRegRoot(MachineFunction &MF,
+                                                int FrameIx,
+                                                unsigned AddrSpace,
+                                                DebugLoc dl) const {
+    llvm_unreachable("Target didn't implement "
+                     "TargetInstrInfo::emitFrameIndexGCRegRoot!");
+  }
+
   /// foldMemoryOperand - Attempt to fold a load or store of the specified stack
   /// slot into the specified machine instruction for the specified operand(s).
   /// If this is possible, a new instruction is returned with the specified
