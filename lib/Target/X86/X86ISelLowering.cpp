@@ -2909,8 +2909,9 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
 
 FastISel *
 X86TargetLowering::createFastISel(FunctionLoweringInfo &funcInfo,
-                                  const TargetLibraryInfo *libInfo) const {
-  return X86::createFastISel(funcInfo, libInfo);
+                                  const TargetLibraryInfo *libInfo,
+                                  GCFunctionInfo &gcInfo) const {
+  return X86::createFastISel(funcInfo, libInfo, gcInfo);
 }
 
 

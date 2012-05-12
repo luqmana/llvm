@@ -17,6 +17,7 @@
 #include "llvm/Module.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Target/Mangler.h"
@@ -120,6 +121,8 @@ void OcamlGCMetadataPrinter::finishAssembly(AsmPrinter &AP) {
   AP.EmitInt16(NumDescriptors);
   AP.EmitAlignment(IntPtrSize == 4 ? 2 : 3);
 
+  const MCRegisterInfo &MRI = AP.OutStreamer.getContext().getRegisterInfo();
+
   for (iterator I = begin(), IE = end(); I != IE; ++I) {
     GCFunctionInfo &FI = **I;
 
@@ -136,8 +139,8 @@ void OcamlGCMetadataPrinter::finishAssembly(AsmPrinter &AP) {
                               Twine(FI.getFunction().getName()));
     AP.OutStreamer.AddBlankLine();
 
-    for (GCFunctionInfo::iterator J = FI.begin(), JE = FI.end(); J != JE; ++J) {
-      size_t LiveCount = FI.live_size(J);
+    for (unsigned PI = 0, PE = FI.size(); PI != PE; ++PI) {
+      size_t LiveCount = FI.live_size(PI);
       if (LiveCount >= 1<<16) {
         // Very rude!
         report_fatal_error("Function '" + FI.getFunction().getName() +
@@ -145,19 +148,26 @@ void OcamlGCMetadataPrinter::finishAssembly(AsmPrinter &AP) {
                            "Live root count "+Twine(LiveCount)+" >= 65536.");
       }
 
-      AP.OutStreamer.EmitSymbolValue(J->Label, IntPtrSize, 0);
+      GCPoint &Point = FI.getPoint(PI);
+      AP.OutStreamer.EmitSymbolValue(Point.Label, IntPtrSize, 0);
       AP.EmitInt16(FrameSize);
       AP.EmitInt16(LiveCount);
 
-      for (GCFunctionInfo::live_iterator K = FI.live_begin(J),
-                                         KE = FI.live_end(J); K != KE; ++K) {
-        if (K->StackOffset >= 1<<16) {
+      for (GCFunctionInfo::live_iterator K = FI.live_begin(PI),
+                                         KE = FI.live_end(PI); K != KE; ++K) {
+        if (K->isReg()) {
+          AP.OutStreamer.AddComment("register root at " +
+                                    Twine(MRI.getName(K->Loc.PhysReg)));
+          AP.OutStreamer.AddBlankLine();
+          continue;
+        }
+        if (K->Loc.StackOffset >= 1<<16) {
           // Very rude!
           report_fatal_error(
                  "GC root stack offset is outside of fixed stack frame and out "
                  "of range for ocaml GC!");
         }
-        AP.EmitInt16(K->StackOffset);
+        AP.EmitInt16(K->Loc.StackOffset);
       }
 
       AP.EmitAlignment(IntPtrSize == 4 ? 2 : 3);

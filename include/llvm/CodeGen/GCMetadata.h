@@ -34,6 +34,7 @@
 #define LLVM_CODEGEN_GCMETADATA_H
 
 #include "llvm/Pass.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/DebugLoc.h"
@@ -66,15 +67,27 @@ namespace llvm {
         : Kind(K), Label(L), Loc(DL) {}
   };
 
+  /// GCRootLoc - The location of an object managed by the garbage collector.
+  union GCRootLoc {
+    int StackOffset;    //< Offset from the stack pointer.
+    int PhysReg;        //< A physical register.
+  };
+
   /// GCRoot - Metadata for a pointer to an object managed by the garbage
   /// collector.
   struct GCRoot {
-    int Num;            ///< Usually a frame index.
-    int StackOffset;    ///< Offset from the stack pointer.
-    const Constant *Metadata; ///< Metadata straight from the call
-                              ///< to llvm.gcroot.
+    int Num;            //< Positive integers indicate a frame index; -1
+                        //  indicates a register.
+    GCRootLoc Loc;      //< The location of the object.
+    const Constant *Metadata;//< Metadata straight from the call to llvm.gcroot.
 
-    GCRoot(int N, const Constant *MD) : Num(N), StackOffset(-1), Metadata(MD) {}
+    inline bool isStack() const { return Num >= 0; }
+    inline bool isReg() const { return !isStack(); }
+
+    GCRoot(int N, const Constant *MD)
+      : Num(N), Metadata(MD) {
+      Loc.StackOffset = -1;
+    }
   };
 
 
@@ -82,9 +95,43 @@ namespace llvm {
   ///
   class GCFunctionInfo {
   public:
+    class live_iterator {
+      GCFunctionInfo &GCFI;
+      unsigned PointIndex;
+      unsigned RootIndex;
+
+      inline void advance() {
+        for (++RootIndex; RootIndex < GCFI.roots_size(); ++RootIndex) {
+          if (GCFI.isLive(PointIndex, RootIndex))
+            break;
+        }
+      }
+
+    public:
+      live_iterator(GCFunctionInfo &FI, unsigned PI, unsigned RI)
+          : GCFI(FI), PointIndex(PI), RootIndex(RI) {
+        if (RootIndex < GCFI.roots_size() &&
+            !GCFI.isLive(PointIndex, RootIndex)) {
+          advance();
+        }
+      }
+
+      inline live_iterator& operator++() { advance(); return *this; }
+
+      inline const GCRoot &operator*() { return GCFI.getRoot(RootIndex); }
+      inline const GCRoot *operator->() { return &operator*(); }
+
+      inline bool operator==(const live_iterator &Other) {
+        return &GCFI == &Other.GCFI && PointIndex == Other.PointIndex &&
+               RootIndex == Other.RootIndex;
+      }
+      inline bool operator!=(const live_iterator &Other) {
+        return !operator==(Other);
+      }
+    };
+
     typedef std::vector<GCPoint>::iterator iterator;
     typedef std::vector<GCRoot>::iterator roots_iterator;
-    typedef std::vector<GCRoot>::const_iterator live_iterator;
 
   private:
     const Function &F;
@@ -93,15 +140,17 @@ namespace llvm {
     std::vector<GCRoot> Roots;
     std::vector<GCPoint> SafePoints;
 
-    // FIXME: Liveness. A 2D BitVector, perhaps?
-    //
-    //   BitVector Liveness;
-    //
-    //   bool islive(int point, int root) =
-    //     Liveness[point * SafePoints.size() + root]
-    //
     // The bit vector is the more compact representation where >3.2% of roots
     // are live per safe point (1.5% on 64-bit hosts).
+    BitVector Liveness;
+
+    // A bit vector that describes whether each root is global or local.
+    // Local roots have their liveness described by the Liveness bit vector,
+    // while global roots are live everywhere.
+    BitVector GlobalRoots;
+
+    // A mapping from safe point symbols to indices.
+    DenseMap<MCSymbol *, unsigned> SafePointSymbols;
 
   public:
     GCFunctionInfo(const Function &F, GCStrategy &S);
@@ -115,18 +164,108 @@ namespace llvm {
     ///
     GCStrategy &getStrategy() { return S; }
 
-    /// addStackRoot - Registers a root that lives on the stack. Num is the
-    ///                stack object ID for the alloca (if the code generator is
-    //                 using  MachineFrameInfo).
-    void addStackRoot(int Num, const Constant *Metadata) {
+    /// addGlobalRoot - Registers a root that lives on the stack and is live
+    /// everywhere. Num is the stack object ID for the alloca (if the code
+    /// generator is using MachineFrameInfo).
+    void addGlobalRoot(int Num, const Constant *Metadata) {
+      assert(Liveness.size() == 0 && "Can't add roots after finalization!");
+      unsigned RootIndex = Roots.size();
       Roots.push_back(GCRoot(Num, Metadata));
+
+      GlobalRoots.resize(Roots.size(), false);
+      GlobalRoots[RootIndex] = true;
+    }
+
+    /// addRegRoot - Registers a root that lives in a register and returns its
+    /// index. The actual physical register will be filled in after register
+    /// allocation.
+    unsigned addRegRoot(const Constant *Metadata) {
+      assert(Liveness.size() == 0 && "Can't add roots after finalization!");
+      unsigned RootIndex = Roots.size();
+      Roots.push_back(GCRoot(-1, Metadata));
+      return RootIndex;
     }
 
     /// addSafePoint - Notes the existence of a safe point. Num is the ID of the
     /// label just prior to the safe point (if the code generator is using
     /// MachineModuleInfo).
     void addSafePoint(GC::PointKind Kind, MCSymbol *Label, DebugLoc DL) {
+      assert(Liveness.size() == 0 &&
+             "Can't add safe points after roots have been finalized!");
+      unsigned PointIndex = SafePoints.size();
       SafePoints.push_back(GCPoint(Kind, Label, DL));
+      SafePointSymbols[Label] = PointIndex;
+    }
+
+    /// getPoint - Returns the safe point with the given index.
+    GCPoint &getPoint(unsigned PointIndex) {
+      assert(PointIndex < SafePoints.size() &&
+             "No point with that index exists!");
+      return SafePoints[PointIndex];
+    }
+
+    /// getPointIndex - Returns the index of the safe point with the given
+    /// label.
+    unsigned getPointIndex(MCSymbol *Label) {
+      assert(SafePointSymbols.find(Label) != SafePointSymbols.end() &&
+             "No safe point with that symbol exists!");
+      return SafePointSymbols[Label];
+    }
+
+    /// getRoot - Returns the root with the given index.
+    inline GCRoot &getRoot(unsigned RootIndex) {
+      assert(RootIndex < Roots.size() && "Invalid root index!");
+      return Roots[RootIndex];
+    }
+
+    /// finalizeRoots - Creates the liveness bit vector. After this call, no
+    /// more roots or safe points can be added.
+    void finalizeRoots() {
+      Liveness.resize(Roots.size() * SafePoints.size(), false);
+      GlobalRoots.resize(Roots.size(), false);
+    }
+
+    /// isRootGlobal - Returns true if the given root is a global root or false
+    /// otherwise.
+    bool isRootGlobal(unsigned RootIndex) const {
+      return GlobalRoots[RootIndex];
+    }
+
+    /// isLive - Returns true if the given root is live at the supplied safe
+    /// point or false otherwise.
+    bool isLive(unsigned PointIndex, unsigned RootIndex) const {
+      assert(Liveness.size() != 0 &&
+             "Liveness is not available until roots have been finalized!");
+      assert(RootIndex < Roots.size() && "Invalid root index!");
+      assert(PointIndex < SafePoints.size() && "Invalid safe point index!");
+      return GlobalRoots[RootIndex] ||
+        Liveness[PointIndex * Roots.size() + RootIndex];
+    }
+
+    /// setLive - Adjusts the liveness of the given root at the supplied safe
+    /// point.
+    void setLive(unsigned PointIndex, unsigned RootIndex, bool Live) {
+      assert(Liveness.size() != 0 &&
+             "Liveness is not available until roots have been finalized!");
+      assert(!GlobalRoots[RootIndex] &&
+             "Cannot adjust the liveness of a global root!");
+      assert(RootIndex < Roots.size() && "Invalid root index!");
+      assert(PointIndex < SafePoints.size() && "Invalid safe point index!");
+      Liveness[PointIndex * Roots.size() + RootIndex] = Live;
+    }
+
+    /// spillRegRoot - Moves the given register root to the stack and assigns
+    /// it the supplied frame index.
+    void spillRegRoot(unsigned RootIndex, int FrameIndex) {
+      assert(RootIndex < Roots.size() && "Invalid root index!");
+      assert(FrameIndex >= 0 && "Invalid frame index!");
+      Roots[RootIndex].Num = FrameIndex;
+    }
+
+    /// setRootLoc - Sets the final location of the given register root.
+    inline void setRootLoc(unsigned RootIndex, GCRootLoc Loc) {
+      assert(RootIndex < Roots.size() && "Invalid root index!");
+      Roots[RootIndex].Loc = Loc;
     }
 
     /// getFrameSize/setFrameSize - Records the function's frame size.
@@ -148,9 +287,20 @@ namespace llvm {
 
     /// live_begin/live_end - Iterators for live roots at a given safe point.
     ///
-    live_iterator live_begin(const iterator &p) { return roots_begin(); }
-    live_iterator live_end  (const iterator &p) { return roots_end();   }
-    size_t live_size(const iterator &p) const { return roots_size(); }
+    live_iterator live_begin(unsigned PointIndex) {
+      return live_iterator(*this, PointIndex, 0);
+    }
+    live_iterator live_end(unsigned PointIndex) {
+      return live_iterator(*this, PointIndex, roots_size());
+    }
+    size_t live_size(unsigned PointIndex) {
+      size_t Count = 0;
+      for (unsigned RI = 0; RI < Roots.size(); ++RI) {
+        if (isLive(PointIndex, RI))
+          ++Count;
+      }
+      return Count;
+    }
   };
 
 

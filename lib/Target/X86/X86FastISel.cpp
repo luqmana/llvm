@@ -20,15 +20,19 @@
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
 #include "llvm/CallingConv.h"
+#include "llvm/Constant.h"
+#include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/GlobalVariable.h"
 #include "llvm/GlobalAlias.h"
 #include "llvm/Instructions.h"
 #include "llvm/IntrinsicInst.h"
+#include "llvm/Module.h"
 #include "llvm/Operator.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
+#include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -58,8 +62,9 @@ class X86FastISel : public FastISel {
 
 public:
   explicit X86FastISel(FunctionLoweringInfo &funcInfo,
-                       const TargetLibraryInfo *libInfo)
-    : FastISel(funcInfo, libInfo) {
+                       const TargetLibraryInfo *libInfo,
+                       GCFunctionInfo &gcInfo)
+    : FastISel(funcInfo, libInfo, gcInfo) {
     Subtarget = &TM.getSubtarget<X86Subtarget>();
     StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
     X86ScalarSSEf64 = Subtarget->hasSSE2();
@@ -2223,6 +2228,7 @@ void X86FastISel::SelectGCRegisterRoots(const CallInst *I) {
   ++II;   // Move right past the call.
 
   // Translate all GC register roots.
+  LLVMContext &C = BB->getParent()->getParent()->getContext();
   for (BasicBlock::const_iterator IE = BB->end(); II != IE; ++II) {
     if (isa<BitCastInst>(&*II))
       continue;
@@ -2235,16 +2241,20 @@ void X86FastISel::SelectGCRegisterRoots(const CallInst *I) {
     Value *Arg = Int->getArgOperand(0)->stripPointerCasts();
     unsigned Reg = getRegForValue(Arg);
     unsigned AddrSpace = cast<PointerType>(Arg->getType())->getAddressSpace();
+    Constant *Metadata = ConstantInt::get(Type::getInt32Ty(C), AddrSpace);
+    unsigned RootIndex = GFI.addRegRoot(Metadata);
+
     const MCInstrDesc &II = TII.get(TargetOpcode::GC_REG_ROOT);
     BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, II)
-      .addReg(Reg).addImm(AddrSpace);
+      .addReg(Reg).addImm(RootIndex);
   }
 }
 
 
 namespace llvm {
   FastISel *X86::createFastISel(FunctionLoweringInfo &funcInfo,
-                                const TargetLibraryInfo *libInfo) {
-    return new X86FastISel(funcInfo, libInfo);
+                                const TargetLibraryInfo *libInfo,
+                                GCFunctionInfo &gcInfo) {
+    return new X86FastISel(funcInfo, libInfo, gcInfo);
   }
 }

@@ -158,15 +158,21 @@ bool Printer::runOnFunction(Function &F) {
   
   OS << "GC roots for " << FD->getFunction().getName() << ":\n";
   for (GCFunctionInfo::roots_iterator RI = FD->roots_begin(),
-                                      RE = FD->roots_end(); RI != RE; ++RI)
-    OS << "\t" << RI->Num << "\t" << RI->StackOffset << "[sp]\n";
+                                      RE = FD->roots_end(); RI != RE; ++RI) {
+    OS << "\t";
+    if (RI->Num >= 0) {
+      OS << "fi#" << RI->Num << "\t" << RI->Loc.StackOffset << "[sp]\n";
+    } else {
+      // TODO: Use TargetRegisterInfo to get an actual name for the register.
+      OS << "reg" << "\t" << RI->Loc.PhysReg << "\n";
+    }
+  }
   
   OS << "GC safe points for " << FD->getFunction().getName() << ":\n";
-  for (GCFunctionInfo::iterator PI = FD->begin(),
-                                PE = FD->end(); PI != PE; ++PI) {
-    
-    OS << "\t" << PI->Label->getName() << ": "
-       << DescKind(PI->Kind) << ", live = {";
+  for (unsigned PI = 0, PE = FD->size(); PI != PE; ++PI) {
+    GCPoint &Point = FD->getPoint(PI);
+    OS << "\t" << Point.Label->getName() << ": "
+       << DescKind(Point.Kind) << ", live = {";
     
     for (GCFunctionInfo::live_iterator RI = FD->live_begin(PI),
                                        RE = FD->live_end(PI);;) {

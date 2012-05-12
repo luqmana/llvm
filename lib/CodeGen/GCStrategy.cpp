@@ -86,6 +86,7 @@ namespace {
                           DebugLoc DL) const;
 
     void FindStackOffsets(MachineFunction &MF);
+    void FindRegisterRoots(MachineFunction &MF);
 
   public:
     static char ID;
@@ -430,6 +431,7 @@ GCMachineCodeFixup::GCMachineCodeFixup()
 void GCMachineCodeFixup::getAnalysisUsage(AnalysisUsage &AU) const {
   MachineFunctionPass::getAnalysisUsage(AU);
   AU.setPreservesAll();
+  AU.addRequired<GCModuleInfo>();
 }
 
 bool GCMachineCodeFixup::runOnMachineFunction(MachineFunction &MF) {
@@ -439,6 +441,8 @@ bool GCMachineCodeFixup::runOnMachineFunction(MachineFunction &MF) {
 
   const TargetMachine &TM = MF.getTarget();
   const TargetInstrInfo *TII = TM.getInstrInfo();
+  GCModuleInfo &GMI = getAnalysis<GCModuleInfo>();
+  GCFunctionInfo &GCFI = GMI.getFunctionInfo(*MF.getFunction());
 
   for (MachineFunction::iterator MBBI = MF.begin(),
                                  MBBE = MF.end(); MBBI != MBBE; ++MBBI) {
@@ -499,17 +503,22 @@ bool GCMachineCodeFixup::runOnMachineFunction(MachineFunction &MF) {
       // Now we've reached either a call or another GC_REG_ROOT instruction.
       // Move the GC_REG_ROOT instruction we're considering to the right place,
       // and rewrite it if necessary.
+      //
+      // Also, tell the GCFunctionInfo about the frame index, since this is
+      // our only chance -- the frame indices will be deleted by the time
+      // GCMachineCodeAnalysis runs.
       ++PrevII;
-      unsigned AddrSpace = MII->getOperand(1).getImm();
+      unsigned RootIndex = MII->getOperand(1).getImm();
       MachineInstr *NewMI;
       if (TracingReg) {
         MachineInstrBuilder MIB = BuildMI(MF, MII->getDebugLoc(),
                                           TII->get(TargetOpcode::GC_REG_ROOT));
-        MIB.addReg(TracedReg).addImm(AddrSpace);
+        MIB.addReg(TracedReg).addImm(RootIndex);
         NewMI = MIB;
       } else {
-        NewMI = TII->emitFrameIndexGCRegRoot(MF, FrameIndex, AddrSpace,
+        NewMI = TII->emitFrameIndexGCRegRoot(MF, FrameIndex, RootIndex,
                                              MII->getDebugLoc());
+        GCFI.spillRegRoot(RootIndex, FrameIndex);
       }
 
       MBBI->insert(PrevII, NewMI);
@@ -580,9 +589,40 @@ void GCMachineCodeAnalysis::FindStackOffsets(MachineFunction &MF) {
   const TargetFrameLowering *TFI = TM->getFrameLowering();
   assert(TFI && "TargetRegisterInfo not available!");
 
-  for (GCFunctionInfo::roots_iterator RI = FI->roots_begin(),
-                                      RE = FI->roots_end(); RI != RE; ++RI)
-    RI->StackOffset = TFI->getFrameIndexOffset(MF, RI->Num);
+  for (unsigned i = 0; i < FI->roots_size(); ++i) {
+    GCRoot &RI = FI->getRoot(i);
+    if (RI.isStack())
+      RI.Loc.StackOffset = TFI->getFrameIndexOffset(MF, RI.Num);
+  }
+}
+
+void GCMachineCodeAnalysis::FindRegisterRoots(MachineFunction &MF) {
+  const TargetFrameLowering *TFI = TM->getFrameLowering();
+  assert(TFI && "TargetRegisterInfo not available!");
+
+  unsigned PointIndex = 0;
+  for (MachineFunction::iterator BBI = MF.begin(),
+                                 BBE = MF.end(); BBI != BBE; ++BBI) {
+    for (MachineBasicBlock::iterator MI = BBI->begin(),
+                                     ME = BBI->end(); MI != ME; ++MI) {
+      if (MI->isGCLabel())
+        PointIndex = FI->getPointIndex(MI->getOperand(0).getMCSymbol());
+      if (!MI->isGCRegRoot())
+        continue;
+
+      unsigned RootIndex = MI->getOperand(MI->getNumOperands() - 1).getImm();
+      if (FI->isRootGlobal(RootIndex))
+        continue;
+
+      FI->setLive(PointIndex, RootIndex, true);
+
+      if (!FI->getRoot(RootIndex).isReg())
+        continue;
+      GCRootLoc Loc;
+      Loc.PhysReg = MI->getOperand(0).getReg();
+      FI->setRootLoc(RootIndex, Loc);
+    }
+  }
 }
 
 bool GCMachineCodeAnalysis::runOnMachineFunction(MachineFunction &MF) {
@@ -608,7 +648,15 @@ bool GCMachineCodeAnalysis::runOnMachineFunction(MachineFunction &MF) {
     FindSafePoints(MF);
   }
 
-  // Find the stack offsets for all roots.
+  // Create the liveness vector.
+  FI->finalizeRoots();
+
+  // Find the register locations for all register roots, and compute their
+  // liveness.
+  FindRegisterRoots(MF);
+
+  // Find the stack offsets for all stack roots, and mark them live everywhere
+  // (for now).
   FindStackOffsets(MF);
 
   return false;
