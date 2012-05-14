@@ -680,6 +680,17 @@ bool FastISel::SelectCall(const User *I) {
     // This is selected while selecting calls. We ignore it here.
     return true;
   }
+  case Intrinsic::gcroot: {
+    const Value *Alloca = Call->getArgOperand(0)->stripPointerCasts();
+    const Constant *TypeMap = cast<Constant>(Call->getArgOperand(1));
+
+    DenseMap<const AllocaInst *, int>::iterator FI =
+      FuncInfo.StaticAllocaMap.find(cast<AllocaInst>(Alloca));
+    assert(FI != FuncInfo.StaticAllocaMap.end() &&
+           "llvm.gcroot operand must be an alloca!");
+    GFI.addGlobalRoot(FI->second, TypeMap);
+    return true;
+  }
   }
 
   // Usually, it does not make sense to initialize a value,
