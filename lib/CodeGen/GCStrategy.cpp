@@ -88,6 +88,7 @@ namespace {
 
     void FindStackOffsets(MachineFunction &MF);
     void FindRegisterRoots(MachineFunction &MF);
+    void FindCalleeSavedRegisters(MachineFunction &MF);
 
   public:
     static char ID;
@@ -637,6 +638,18 @@ void GCMachineCodeAnalysis::FindRegisterRoots(MachineFunction &MF) {
   }
 }
 
+void GCMachineCodeAnalysis::FindCalleeSavedRegisters(MachineFunction &MF) {
+  const std::vector<CalleeSavedInfo> CSInfo =
+      MF.getFrameInfo()->getCalleeSavedInfo();
+  const TargetFrameLowering *TFI = TM->getFrameLowering();
+  for (std::vector<CalleeSavedInfo>::const_iterator CSIB = CSInfo.begin(),
+                                                    CSIE = CSInfo.end();
+                                                    CSIB != CSIE; ++CSIB) {
+    int StackOffset = TFI->getFrameIndexOffset(MF, CSIB->getFrameIdx());
+    FI->addCalleeSavedReg(CSIB->getReg(), CSIB->getFrameIdx(), StackOffset);
+  }
+}
+
 bool GCMachineCodeAnalysis::runOnMachineFunction(MachineFunction &MF) {
   // Quick exit for functions that do not use GC.
   if (!MF.getFunction()->hasGC())
@@ -662,6 +675,9 @@ bool GCMachineCodeAnalysis::runOnMachineFunction(MachineFunction &MF) {
 
   // Create the liveness vector.
   FI->finalizeRoots();
+
+  // Populate the list of callee-saved registers.
+  FindCalleeSavedRegisters(MF);
 
   // Find the register locations for all register roots, and compute their
   // liveness.

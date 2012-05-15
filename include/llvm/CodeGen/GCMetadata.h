@@ -90,6 +90,16 @@ namespace llvm {
     }
   };
 
+  /// GCCalleeSavedInfo - Metadata for a callee-saved register.
+  struct GCCalleeSavedInfo {
+    unsigned Reg;     //< The physical register.
+    int Num;          //< The frame index.
+    int StackOffset;  //< Offset from the stack pointer.
+
+    GCCalleeSavedInfo(unsigned R, int N, int SO)
+      : Reg(R), Num(N), StackOffset(SO) {}
+  };
+
 
   /// GCFunctionInfo - Garbage collection metadata for a single function.
   ///
@@ -132,6 +142,7 @@ namespace llvm {
 
     typedef std::vector<GCPoint>::iterator iterator;
     typedef std::vector<GCRoot>::iterator roots_iterator;
+    typedef std::vector<GCCalleeSavedInfo>::iterator callee_saved_iterator;
 
   private:
     const Function &F;
@@ -151,6 +162,9 @@ namespace llvm {
 
     // A mapping from safe point symbols to indices.
     DenseMap<MCSymbol *, unsigned> SafePointSymbols;
+
+    // A list of callee-saved registers in this function.
+    std::vector<GCCalleeSavedInfo> CSInfo;
 
   public:
     GCFunctionInfo(const Function &F, GCStrategy &S);
@@ -273,6 +287,11 @@ namespace llvm {
     uint64_t getFrameSize() const { return FrameSize; }
     void setFrameSize(uint64_t S) { FrameSize = S; }
 
+    /// addCalleeSavedReg - Records information about a callee-saved register.
+    void addCalleeSavedReg(unsigned Reg, int FI, int SO) {
+      CSInfo.push_back(GCCalleeSavedInfo(Reg, FI, SO));
+    }
+
     /// begin/end - Iterators for safe points.
     ///
     iterator begin() { return SafePoints.begin(); }
@@ -301,6 +320,12 @@ namespace llvm {
       }
       return Count;
     }
+
+    /// callee_saved_begin/callee_saved_end - Iterators for callee-saved
+    /// registers.
+    callee_saved_iterator callee_saved_begin() { return CSInfo.begin(); }
+    callee_saved_iterator callee_saved_end()   { return CSInfo.end(); }
+    size_t callee_saved_size() { return CSInfo.size(); }
   };
 
 
