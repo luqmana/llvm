@@ -447,11 +447,6 @@ VNInfo *SplitEditor::defFromParent(unsigned RegIdx,
     // Can't remat, just insert a copy from parent.
     CopyMI = BuildMI(MBB, I, DebugLoc(), TII.get(TargetOpcode::COPY), LI->reg)
                .addReg(Edit->getReg());
-    printf("\n\n### SplitEditor inserting copy:\n");
-    CopyMI->dump();
-    printf("### Before:\n");
-    I->dump();
-    printf("\n\n");
     Def = LIS.getSlotIndexes()->insertMachineInstrInMaps(CopyMI, Late)
             .getRegSlot();
     ++NumCopies;
