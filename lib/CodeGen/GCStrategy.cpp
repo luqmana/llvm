@@ -48,6 +48,7 @@ namespace {
     static bool InsertRootInitializers(Function &F,
                                        AllocaInst **Roots, unsigned Count);
     void InsertGCRegisterRoots(Function &F, GCStrategy &S);
+    bool IsGCRoot(Value *V);
 
   public:
     static char ID;
@@ -287,20 +288,30 @@ bool LowerIntrinsics::runOnFunction(Function &F) {
   return MadeChange;
 }
 
+bool LowerIntrinsics::IsGCRoot(Value *V) {
+  Type *Ty = V->getType();
+  return isa<PointerType>(Ty) && cast<PointerType>(Ty)->getAddressSpace() != 0;
+}
+
 void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
   DominatorTree *DT = getAnalysisIfAvailable<DominatorTree>();
   if (!DT)
     return;
 
-  // Gather up all of the GC roots in the function.
-  SmallVector<Instruction *, 8> GCRoots;
+  // Gather up all of the GC roots in the function. Start with arguments.
+  SmallVector<Value *, 8> GCRoots;
+  for (Function::arg_iterator AI = F.arg_begin(),
+                              AE = F.arg_end(); AI != AE; ++AI) {
+    if (IsGCRoot(&*AI))
+      GCRoots.push_back(&*AI);
+  }
+
+  // Gather up values defined in basic blocks as well.
   for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
     for (BasicBlock::iterator II = BBI->begin(),
                               IE = BBI->end(); II != IE; ++II) {
-      if (isa<PointerType>(II->getType()) &&
-          cast<PointerType>(II->getType())->getAddressSpace() != 0) {
+      if (IsGCRoot(&*II))
         GCRoots.push_back(&*II);
-      }
     }
   }
 
@@ -325,10 +336,11 @@ void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
       //
       // FIXME: Only considers dominance right now...
       SmallVector<Instruction *, 8> GeneratedInsts;
-      for (SmallVector<Instruction *, 8>::iterator RI = GCRoots.begin(),
-                                                   RE = GCRoots.end();
-                                                   RI != RE; ++RI) {
-        if (!DT->dominates(*RI, &*II))
+      for (SmallVector<Value *, 8>::iterator RI = GCRoots.begin(),
+                                             RE = GCRoots.end();
+                                             RI != RE; ++RI) {
+        if (isa<Instruction>(*RI) &&
+            !DT->dominates(cast<Instruction>(*RI), &*II))
           continue;
 
         // Cast the value to an i8* to make a type-compatible intrinsic call.
