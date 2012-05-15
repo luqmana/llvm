@@ -46,7 +46,7 @@ namespace {
     static bool CouldBecomeSafePoint(Instruction *I);
     bool PerformDefaultLowering(Function &F, GCStrategy &Coll);
     static bool InsertRootInitializers(Function &F,
-                                       AllocaInst **Roots, unsigned Count);
+                                       Instruction **Roots, unsigned Count);
     void InsertGCRegisterRoots(Function &F, GCStrategy &S);
     bool IsGCRoot(Value *V);
 
@@ -189,7 +189,7 @@ bool LowerIntrinsics::doInitialization(Module &M) {
   return MadeChange;
 }
 
-bool LowerIntrinsics::InsertRootInitializers(Function &F, AllocaInst **Roots,
+bool LowerIntrinsics::InsertRootInitializers(Function &F, Instruction **Roots,
                                                           unsigned Count) {
   // Scroll past alloca instructions.
   BasicBlock::iterator IP = F.getEntryBlock().begin();
@@ -206,14 +206,21 @@ bool LowerIntrinsics::InsertRootInitializers(Function &F, AllocaInst **Roots,
   // Add root initializers.
   bool MadeChange = false;
 
-  for (AllocaInst **I = Roots, **E = Roots + Count; I != E; ++I)
-    if (!InitedRoots.count(*I)) {
-      StoreInst* SI = new StoreInst(ConstantPointerNull::get(cast<PointerType>(
-                        cast<PointerType>((*I)->getType())->getElementType())),
-                        *I);
-      SI->insertAfter(*I);
+  for (Instruction **II = Roots, **IE = Roots + Count; II != IE; ++II) {
+    // Trace back through GEPs to find the actual alloca.
+    Instruction *I = *II;
+    while (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I))
+      I = cast<Instruction>(GEP->getPointerOperand());
+
+    AllocaInst *AI = cast<AllocaInst>(I);
+    if (!InitedRoots.count(AI)) {
+      Type *ElemTy = cast<PointerType>((*II)->getType())->getElementType();
+      PointerType *PElemTy = cast<PointerType>(ElemTy);
+      StoreInst* SI = new StoreInst(ConstantPointerNull::get(PElemTy), *II);
+      SI->insertAfter(*II);
       MadeChange = true;
     }
+  }
 
   return MadeChange;
 }
@@ -381,7 +388,7 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
   bool LowerRd = !S.customReadBarrier();
   bool InitRoots = S.initializeRoots();
 
-  SmallVector<AllocaInst*, 32> Roots;
+  SmallVector<Instruction *, 32> Roots;
 
   bool MadeChange = false;
   for (Function::iterator BB = F.begin(), E = F.end(); BB != E; ++BB) {
@@ -411,8 +418,8 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
           if (InitRoots) {
             // Initialize the GC root, but do not delete the intrinsic. The
             // backend needs the intrinsic to flag the stack slot.
-            Roots.push_back(cast<AllocaInst>(
-                              CI->getArgOperand(0)->stripPointerCasts()));
+            Value *V = CI->getArgOperand(0)->stripPointerCasts();
+            Roots.push_back(cast<Instruction>(V));
           }
           break;
         default:
@@ -605,7 +612,7 @@ void GCMachineCodeAnalysis::FindStackOffsets(MachineFunction &MF) {
   for (unsigned i = 0; i < FI->roots_size(); ++i) {
     GCRoot &RI = FI->getRoot(i);
     if (RI.isStack())
-      RI.Loc.StackOffset = TFI->getFrameIndexOffset(MF, RI.Num);
+      RI.Loc.StackOffset += TFI->getFrameIndexOffset(MF, RI.Num);
   }
 }
 

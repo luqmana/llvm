@@ -58,6 +58,7 @@
 #include "llvm/PassManager.h"
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Assembly/Writer.h"
+#include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/CFG.h"
@@ -301,6 +302,8 @@ namespace {
                               bool isReturnValue, const Value *V);
     void VerifyFunctionAttrs(FunctionType *FT, const AttrListPtr &Attrs,
                              const Value *V);
+    void VerifyGCRootValue(const CallInst &CI, const AllocaInst *&OutAI,
+                           Type *&OutElemTy);
 
     void WriteValue(const Value *V) {
       if (!V) return;
@@ -1800,6 +1803,46 @@ bool Verifier::VerifyIntrinsicType(Type *Ty,
   llvm_unreachable("unhandled");
 }
 
+/// visitGCRootValue - Verify that the argument to @llvm.gcroot points to a
+/// valid GC root.
+///
+void Verifier::VerifyGCRootValue(const CallInst &CI, const AllocaInst *&OutAI,
+                                 Type *&OutElemTy) {
+  const Value *V = CI.getArgOperand(0)->stripPointerCasts();
+  Assert1(isa<Instruction>(V),
+          "llvm.gcroot parameter #1 must be an instruction.", &CI);
+  const Instruction *I = cast<Instruction>(V);
+  Type *Ty = I->getType();
+
+  while (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I)) {
+    Ty = GEP->getPointerOperand()->getType();
+    for (GetElementPtrInst::const_op_iterator OI = GEP->op_begin() + 1,
+                                              OE = GEP->op_end();
+                                              OI != OE; ++OI) {
+      if (StructType *StructTy = dyn_cast<StructType>(Ty)) {
+        unsigned Field = cast<ConstantInt>(*OI)->getZExtValue();
+        Ty = StructTy->getElementType(Field);
+        continue;
+      }
+
+      Ty = cast<SequentialType>(Ty)->getElementType();
+      Assert1(isa<ConstantInt>(*OI),
+              "GEP arguments to llvm.gcroot must have constant indices!", I);
+    }
+
+    V = GEP->getPointerOperand();
+    Assert1(isa<Instruction>(V),
+            "llvm.gcroot parameter #1 must be an instruction.", &CI);
+    I = cast<Instruction>(V);
+  }
+
+  Assert1(isa<AllocaInst>(I), "llvm.gcroot parameter #1 must be an alloca.",
+          &CI);
+
+  OutAI = cast<AllocaInst>(I);
+  OutElemTy = Ty;
+}
+
 /// visitIntrinsicFunction - Allow intrinsics to be verified in different ways.
 ///
 void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
@@ -1867,12 +1910,15 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
   case Intrinsic::gcwrite:
   case Intrinsic::gcread:
     if (ID == Intrinsic::gcroot) {
-      AllocaInst *AI =
-        dyn_cast<AllocaInst>(CI.getArgOperand(0)->stripPointerCasts());
-      Assert1(AI, "llvm.gcroot parameter #1 must be an alloca.", &CI);
+      const AllocaInst *AI = NULL;
+      Type *ElemTy = NULL;
+      VerifyGCRootValue(CI, AI, ElemTy);
+      if (!AI)
+        break;
+
       Assert1(isa<Constant>(CI.getArgOperand(1)),
               "llvm.gcroot parameter #2 must be a constant.", &CI);
-      if (!AI->getType()->getElementType()->isPointerTy()) {
+      if (!ElemTy->isPointerTy()) {
         Assert1(!isa<ConstantPointerNull>(CI.getArgOperand(1)),
                 "llvm.gcroot parameter #1 must either be a pointer alloca, "
                 "or argument #2 must be a non-null constant.", &CI);

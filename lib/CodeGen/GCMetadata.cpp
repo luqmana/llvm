@@ -16,11 +16,18 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/Pass.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/Constant.h"
+#include "llvm/Constants.h"
 #include "llvm/Function.h"
+#include "llvm/Instructions.h"
+#include "llvm/Type.h"
+#include "llvm/Value.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetData.h"
+#include <utility>
 using namespace llvm;
 
 namespace {
@@ -63,6 +70,38 @@ GCFunctionInfo::GCFunctionInfo(const Function &F, GCStrategy &S)
   : F(F), S(S), FrameSize(~0LL) {}
 
 GCFunctionInfo::~GCFunctionInfo() {}
+
+std::pair<const AllocaInst *, unsigned>
+GCFunctionInfo::findGCRootOrigin(const TargetData *TD, const Value *V) {
+  const Instruction *I = cast<Instruction>(V->stripPointerCasts());
+
+  unsigned Offset = 0;
+  while (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(I)) {
+    Type *Ty = GEP->getPointerOperand()->getType();
+    for (GetElementPtrInst::const_op_iterator OI = GEP->op_begin() + 1,
+                                              OE = GEP->op_end();
+                                              OI != OE; ++OI) {
+      if (StructType *StructTy = dyn_cast<StructType>(Ty)) {
+        unsigned Field = cast<ConstantInt>(*OI)->getZExtValue();
+        if (TD)
+          Offset += TD->getStructLayout(StructTy)->getElementOffset(Field);
+        Ty = StructTy->getElementType(Field);
+        continue;
+      }
+
+      Ty = cast<SequentialType>(Ty)->getElementType();
+      assert(isa<ConstantInt>(*OI) &&
+             "GEP arguments to llvm.gcroot must have constant indices!");
+      unsigned Index = cast<ConstantInt>(*OI)->getSExtValue();
+      if (TD)
+        Offset += TD->getTypeAllocSize(Ty) * Index;
+    }
+
+    I = cast<Instruction>(GEP->getPointerOperand());
+  }
+
+  return std::make_pair(cast<AllocaInst>(I), Offset);
+}
 
 // -----------------------------------------------------------------------------
 

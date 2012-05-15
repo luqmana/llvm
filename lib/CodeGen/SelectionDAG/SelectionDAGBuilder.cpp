@@ -5155,11 +5155,13 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   }
   case Intrinsic::gcroot:
     if (GFI) {
-      const Value *Alloca = I.getArgOperand(0)->stripPointerCasts();
+      std::pair<const Value *, unsigned> Pair =
+          GCFunctionInfo::findGCRootOrigin(TD, I.getArgOperand(0));
       const Constant *TypeMap = cast<Constant>(I.getArgOperand(1));
 
-      FrameIndexSDNode *FI = cast<FrameIndexSDNode>(getValue(Alloca).getNode());
-      GFI->addGlobalRoot(FI->getIndex(), TypeMap);
+      const AllocaInst *AI = cast<AllocaInst>(Pair.first);
+      FrameIndexSDNode *FI = cast<FrameIndexSDNode>(getValue(AI).getNode());
+      GFI->addGlobalRoot(FI->getIndex(), Pair.second, TypeMap);
     }
     return 0;
   case Intrinsic::gcread:

@@ -38,12 +38,16 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/DebugLoc.h"
+#include <utility>
 
 namespace llvm {
+  class AllocaInst;
   class AsmPrinter;
   class GCStrategy;
   class Constant;
   class MCSymbol;
+  class TargetData;
+  class Value;
 
   namespace GC {
     /// PointKind - The type of a collector-safe point.
@@ -84,9 +88,9 @@ namespace llvm {
     inline bool isStack() const { return Num >= 0; }
     inline bool isReg() const { return !isStack(); }
 
-    GCRoot(int N, const Constant *MD)
+    GCRoot(int N, unsigned Offset, const Constant *MD)
       : Num(N), Metadata(MD) {
-      Loc.StackOffset = -1;
+      Loc.StackOffset = Offset;
     }
   };
 
@@ -180,11 +184,12 @@ namespace llvm {
 
     /// addGlobalRoot - Registers a root that lives on the stack and is live
     /// everywhere. Num is the stack object ID for the alloca (if the code
-    /// generator is using MachineFrameInfo).
-    void addGlobalRoot(int Num, const Constant *Metadata) {
+    /// generator is using MachineFrameInfo), while Offset is the offset in
+    /// bytes from that stack object.
+    void addGlobalRoot(int Num, unsigned Offset, const Constant *Metadata) {
       assert(Liveness.size() == 0 && "Can't add roots after finalization!");
       unsigned RootIndex = Roots.size();
-      Roots.push_back(GCRoot(Num, Metadata));
+      Roots.push_back(GCRoot(Num, Offset, Metadata));
 
       GlobalRoots.resize(Roots.size(), false);
       GlobalRoots[RootIndex] = true;
@@ -196,7 +201,7 @@ namespace llvm {
     unsigned addRegRoot(const Constant *Metadata) {
       assert(Liveness.size() == 0 && "Can't add roots after finalization!");
       unsigned RootIndex = Roots.size();
-      Roots.push_back(GCRoot(-1, Metadata));
+      Roots.push_back(GCRoot(-1, 0, Metadata));
       return RootIndex;
     }
 
@@ -281,6 +286,12 @@ namespace llvm {
       assert(RootIndex < Roots.size() && "Invalid root index!");
       Roots[RootIndex].Loc = Loc;
     }
+
+    /// findGCRootOrigin - Traces the argument to llvm.gcroot back to its
+    /// origin (through any pointer casts or GEPs) and returns the original
+    /// value as well as the byte offset of the pointer of interest within it.
+    static std::pair<const AllocaInst *, unsigned>
+    findGCRootOrigin(const TargetData *TD, const Value *V);
 
     /// getFrameSize/setFrameSize - Records the function's frame size.
     ///

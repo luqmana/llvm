@@ -681,14 +681,13 @@ bool FastISel::SelectCall(const User *I) {
     return true;
   }
   case Intrinsic::gcroot: {
-    const Value *Alloca = Call->getArgOperand(0)->stripPointerCasts();
+    std::pair<const Value *, unsigned> Pair =
+        GCFunctionInfo::findGCRootOrigin(&TD, Call->getArgOperand(0));
     const Constant *TypeMap = cast<Constant>(Call->getArgOperand(1));
 
     DenseMap<const AllocaInst *, int>::iterator FI =
-      FuncInfo.StaticAllocaMap.find(cast<AllocaInst>(Alloca));
-    assert(FI != FuncInfo.StaticAllocaMap.end() &&
-           "llvm.gcroot operand must be an alloca!");
-    GFI.addGlobalRoot(FI->second, TypeMap);
+      FuncInfo.StaticAllocaMap.find(cast<AllocaInst>(Pair.first));
+    GFI.addGlobalRoot(FI->second, Pair.second, TypeMap);
     return true;
   }
   }
