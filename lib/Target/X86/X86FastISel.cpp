@@ -2227,8 +2227,11 @@ void X86FastISel::SelectGCRegisterRoots(const CallInst *I) {
     ++II;
   ++II;   // Move right past the call.
 
+  Module *M = const_cast<Module *>(BB->getParent()->getParent());
+  LLVMContext &C = M->getContext();
+  Type *Int32Ty = Type::getInt32Ty(C);
+
   // Translate all GC register roots.
-  LLVMContext &C = BB->getParent()->getParent()->getContext();
   for (BasicBlock::const_iterator IE = BB->end(); II != IE; ++II) {
     if (isa<BitCastInst>(&*II))
       continue;
@@ -2241,7 +2244,11 @@ void X86FastISel::SelectGCRegisterRoots(const CallInst *I) {
     Value *Arg = Int->getArgOperand(0)->stripPointerCasts();
     unsigned Reg = getRegForValue(Arg);
     unsigned AddrSpace = cast<PointerType>(Arg->getType())->getAddressSpace();
-    Constant *Metadata = ConstantInt::get(Type::getInt32Ty(C), AddrSpace);
+
+    GlobalVariable *Metadata =
+      cast<GlobalVariable>(M->getOrInsertGlobal("_gc_addr_space", Int32Ty));
+    if (!Metadata->hasInitializer())
+      Metadata->setInitializer(ConstantInt::get(Int32Ty, AddrSpace));
     unsigned RootIndex = GFI.addRegRoot(Metadata);
 
     const MCInstrDesc &II = TII.get(TargetOpcode::GC_REG_ROOT);

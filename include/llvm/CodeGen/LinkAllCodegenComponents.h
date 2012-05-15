@@ -38,6 +38,7 @@ namespace {
 
       llvm::linkOcamlGC();
       llvm::linkShadowStackGC();
+      llvm::linkGenericGC();
 
       (void) llvm::createBURRListDAGScheduler(NULL, llvm::CodeGenOpt::Default);
       (void) llvm::createSourceListDAGScheduler(NULL,llvm::CodeGenOpt::Default);

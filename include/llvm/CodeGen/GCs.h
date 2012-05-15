@@ -30,6 +30,12 @@ namespace llvm {
   /// Creates a shadow stack garbage collector. This collector requires no code
   /// generator support.
   void linkShadowStackGC();
+
+  /// Creates a generic garbage collector.
+  void linkGenericGC();
+
+  /// Creates a generic metadata printer.
+  void linkGenericGCPrinter();
 }
 
 #endif
