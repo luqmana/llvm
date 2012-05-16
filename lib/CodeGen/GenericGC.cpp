@@ -33,6 +33,7 @@ void llvm::linkGenericGC() {}
 
 GenericGC::GenericGC() {
   NeededSafePoints = 1 << GC::PostCall;
+  UsesAutomaticRoots = true;
   UsesMetadata = true;
 }
 

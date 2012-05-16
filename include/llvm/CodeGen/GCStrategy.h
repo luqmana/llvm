@@ -70,9 +70,12 @@ namespace llvm {
     bool CustomWriteBarriers;  ///< Default is to insert stores.
     bool CustomRoots;          ///< Default is to pass through to backend.
     bool CustomSafePoints;     ///< Default is to use NeededSafePoints
-                               ///< to find safe points.
+                               ///  to find safe points.
     bool InitRoots;            ///< If set, roots are nulled during lowering.
     bool UsesMetadata;         ///< If set, backend must emit metadata tables.
+    bool UsesAutomaticRoots;   ///< If set, calls to llvm.gcroot are inserted
+                               ///  automatically for pointers in address space
+                               ///  1.
     
   public:
     GCStrategy();
@@ -128,6 +131,11 @@ namespace llvm {
     /// usesMetadata - If set, appropriate metadata tables must be emitted by
     ///                the back-end (assembler, JIT, or otherwise).
     bool usesMetadata() const { return UsesMetadata; }
+
+    /// usesAutomaticRoots - If set, calls to llvm.gcroot are automatically
+    ///                      inserted for structs that contain pointers in
+    ///                      address space 1.
+    bool usesAutomaticRoots() const { return UsesAutomaticRoots; }
     
     /// begin/end - Iterators for function metadata.
     /// 
