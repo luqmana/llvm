@@ -29,6 +29,7 @@ add_llvm_library(LLVMCodeGen
   LatencyPriorityQueue.cpp
   LexicalScopes.cpp
   LiveDebugVariables.cpp
+  LiveIRVariables.cpp
   LiveInterval.cpp
   LiveIntervalAnalysis.cpp
   LiveIntervalUnion.cpp

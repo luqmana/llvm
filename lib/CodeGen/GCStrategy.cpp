@@ -21,6 +21,7 @@
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Module.h"
 #include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/LiveIRVariables.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -170,6 +171,7 @@ void LowerIntrinsics::getAnalysisUsage(AnalysisUsage &AU) const {
   FunctionPass::getAnalysisUsage(AU);
   AU.addRequired<GCModuleInfo>();
   AU.addRequired<DominatorTree>();
+  AU.addRequired<LiveIRVariables>();
 }
 
 /// doInitialization - If this module uses the GC intrinsics, find them now.
