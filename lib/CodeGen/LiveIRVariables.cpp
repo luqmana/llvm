@@ -241,18 +241,18 @@ void LiveIRVariables::computeReachableBackEdges(Function &F) {
   }
 }
 
+BasicBlock &LiveIRVariables::getDefiningBlock(Value &V) {
+  if (isa<Argument>(V))
+    return cast<Argument>(V).getParent()->getEntryBlock();
+  if (isa<Instruction>(V))
+    return *cast<Instruction>(V).getParent();
+
+  llvm_unreachable("Only arguments and instructions have definition sites!");
+}
+
 bool LiveIRVariables::isLiveIn(Value &V, BasicBlock &BB) {
   DominatorTree &DT = getAnalysis<DominatorTree>();
-
-  BasicBlock *DefBB;
-  if (isa<Argument>(V)) {
-    DefBB = &cast<Argument>(V).getParent()->getEntryBlock();
-  } else if (isa<Instruction>(V)) {
-    DefBB = cast<Instruction>(V).getParent();
-  } else {
-    llvm_unreachable("LiveIRVariables::isLiveIn() needs an Argument or an "
-                     "Instruction!");
-  }
+  BasicBlock &DefBB = getDefiningBlock(V);
 
   BitVector &BackEdges = ReachableBackEdges[DFSOrdering.idFor(&BB) - 1];
   for (int i = BackEdges.find_first(); i != -1; i = BackEdges.find_next(i)) {
@@ -260,12 +260,65 @@ bool LiveIRVariables::isLiveIn(Value &V, BasicBlock &BB) {
 
     // Ignore back edge targets that leave the dominance tree of def(V) and
     // reenter it.
-    if (!DT.dominates(DefBB, &ReachableBB))
+    if (!DT.properlyDominates(&DefBB, &ReachableBB))
       continue;
 
     BitVector &ReachableBlocks = ReducedReachability[i];
     for (int j = ReachableBlocks.find_first(); j != -1;
          j = ReachableBlocks.find_next(j)) {
+      // FIXME: Precompute this to speed this up.
+      if (V.isUsedInBasicBlock(DFSOrdering[j + 1]))
+        return true;
+    }
+  }
+
+  return false;
+}
+
+bool LiveIRVariables::isBackEdgeTarget(BasicBlock &BB) {
+  for (pred_iterator PI = pred_begin(&BB),
+                     PE = pred_end(&BB); PI != PE; ++PI) {
+    if (BackEdges.count(std::make_pair(*PI, &BB)))
+      return true;
+  }
+  return false;
+}
+
+bool LiveIRVariables::isLiveOut(Value &V, BasicBlock &BB) {
+  BasicBlock &DefBB = getDefiningBlock(V);
+  if (&DefBB == &BB) {
+    // If the value is defined within this basic block, just look for any use
+    // outside it.
+    for (Value::use_iterator UI = V.use_begin(),
+                             UE = V.use_end(); UI != UE; ++UI) {
+      if (isa<Instruction>(*UI) && cast<Instruction>(*UI)->getParent() != &BB)
+        return true;
+    }
+    return false;
+  }
+
+  DominatorTree &DT = getAnalysis<DominatorTree>();
+  if (!DT.properlyDominates(&DefBB, &BB))
+    return false;
+
+  unsigned BBID = DFSOrdering.idFor(&BB) - 1;
+  BitVector &BackEdges = ReachableBackEdges[BBID];
+  bool BBIsBackEdgeTarget = isBackEdgeTarget(BB);
+
+  for (int i = BackEdges.find_first(); i != -1; i = BackEdges.find_next(i)) {
+    BasicBlock &ReachableBB = *DFSOrdering[i + 1];
+
+    // Ignore back edge targets that leave the dominance tree of def(V) and
+    // reenter it.
+    if (!DT.properlyDominates(&DefBB, &ReachableBB))
+      continue;
+
+    BitVector &ReachableBlocks = ReducedReachability[i];
+    for (int j = ReachableBlocks.find_first(); j != -1;
+         j = ReachableBlocks.find_next(j)) {
+      if ((unsigned)j == BBID && j == i && !BBIsBackEdgeTarget)
+        continue;   // Skip trivial paths.
+      // FIXME: Precompute this to speed this up.
       if (V.isUsedInBasicBlock(DFSOrdering[j + 1]))
         return true;
     }
@@ -281,10 +334,12 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
                               IE = BBAI->end(); II != IE; ++II) {
       for (Function::iterator BBBI = F.begin(),
                               BBBE = F.end(); BBBI != BBBE; ++BBBI) {
-        bool Live = isLiveIn(*II, *BBBI);
-        if (!Live && !IncludeDead)
+        bool LiveIn = isLiveIn(*II, *BBBI), LiveOut = isLiveOut(*II, *BBBI);
+        if (!LiveIn && !LiveOut && !IncludeDead)
           continue;
-        dbgs() << "Value is " << (Live ? "" : "NOT ") << "live-in at ";
+        dbgs() << "Value is " << (LiveIn ? "" : "NOT ") << "live-in ";
+        dbgs() << (LiveIn != LiveOut ? "but " : "and ");
+        dbgs() << (LiveOut ? "" : "NOT ") << "live-out at ";
         dbgs() << (DFSOrdering.idFor(&*BBBI) - 1) << ":\n" << *II << "\n";
       }
     }

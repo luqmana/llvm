@@ -46,9 +46,13 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const;
   bool runOnFunction(Function &F);
 
-  /// Returns true if the given value is live-in to the given block and false
+  /// Returns true if the given value is live-in to the supplied block or false
   /// otherwise.
   bool isLiveIn(Value &V, BasicBlock &BB);
+
+  /// Returns true if the given value is live-out from the given block or false
+  /// otherwise.
+  bool isLiveOut(Value &V, BasicBlock &BB);
 
   /// Dumps the liveness information for all instructions, for debugging.
   /// IncludeDead should be set to true if even dead variables should be
@@ -68,6 +72,9 @@ private:
                                   UniqueVector<BasicBlock *> &Ordering);
   void computeReducedReachability(Function &F);
   void computeReachableBackEdges(Function &F);
+  bool isBackEdgeTarget(BasicBlock &BB);
+
+  static BasicBlock &getDefiningBlock(Value &V);
 };
 
 } // end namespace llvm
