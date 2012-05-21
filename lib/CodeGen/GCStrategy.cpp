@@ -16,12 +16,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/GCStrategy.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Module.h"
 #include "llvm/Analysis/Dominators.h"
-#include "llvm/Analysis/LiveIRVariables.h"
+#include "llvm/CodeGen/LiveIRVariables.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -378,7 +379,8 @@ void LowerIntrinsics::InsertAutomaticGCRoots(Function &F, GCStrategy &S) {
 
 void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
   DominatorTree *DT = getAnalysisIfAvailable<DominatorTree>();
-  if (!DT)
+  LiveIRVariables *LV = getAnalysisIfAvailable<LiveIRVariables>();
+  if (!DT || !LV)
     return;
 
   // Gather up all of the GC roots in the function. Start with arguments.
@@ -398,7 +400,7 @@ void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
     }
   }
 
-  // Now insert calls to llvm.gcregroot after calls.
+  // For each live root at a call site, insert a call to llvm.gcregroot.
   Function *GCRegRootFn = Intrinsic::getDeclaration(F.getParent(),
                                                     Intrinsic::gcregroot);
   Type *PtrTy = Type::getInt8PtrTy(F.getParent()->getContext());
@@ -416,21 +418,51 @@ void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
       }
 
       // Find all the live GC roots, and create gcregroot intrinsics for them.
-      //
-      // FIXME: Only considers dominance right now...
       SmallVector<Instruction *, 8> GeneratedInsts;
       for (SmallVector<Value *, 8>::iterator RI = GCRoots.begin(),
                                              RE = GCRoots.end();
                                              RI != RE; ++RI) {
+        if (!isa<Argument>(*RI) && !isa<Instruction>(*RI))
+          continue;
+
+        // Quick bail-out for calls that aren't even in the dominance subtree
+        // of the root.
         if (isa<Instruction>(*RI) &&
             !DT->dominates(cast<Instruction>(*RI), &*II))
           continue;
 
-        // Cast the value to an i8* to make a type-compatible intrinsic call.
+        // We now need to determine whether the root is live. Since our
+        // liveness works on basic blocks, we need a little special handling
+        // here.
+        //
+        // First, we check to see whether there's a use after the call site.
+        // If there is, the root is clearly live.
+        SmallSet<Instruction *, 16> ImmediateSuccessors;
+        BasicBlock::iterator SI = II;
+        for (++SI; SI != IE; ++SI)
+          ImmediateSuccessors.insert(&*SI);
+        bool IsUsedAfterCall = false;
+        for (Value::use_iterator UI = (*RI)->use_begin(),
+                                 UE = (*RI)->use_end(); UI != UE; ++UI) {
+          if (isa<Instruction>(*UI) &&
+              ImmediateSuccessors.count(cast<Instruction>(*UI))) {
+            IsUsedAfterCall = true;
+            break;
+          }
+        }
+
+        // If the root isn't used in this basic block, then we check to see
+        // whether it's live-out of this block. If not, it's dead and we skip
+        // it.
+        if (!IsUsedAfterCall && !LV->isLiveOut(**RI, *BBI))
+          continue;
+
+        // Ok, we need to root this value. First, cast the value to an i8* to
+        // make a type-compatible intrinsic call.
         Instruction *GCRegRootArg = new BitCastInst(*RI, PtrTy);
         GeneratedInsts.push_back(GCRegRootArg);
 
-        // Create an intrinsic call.
+        // Create the intrinsic call.
         Value *Args[1];
         Args[0] = GCRegRootArg;
         GeneratedInsts.push_back(CallInst::Create(GCRegRootFn, Args));
