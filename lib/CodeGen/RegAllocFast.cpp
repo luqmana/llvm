@@ -14,6 +14,7 @@
 
 #define DEBUG_TYPE "regalloc"
 #include "llvm/BasicBlock.h"
+#include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -176,6 +177,7 @@ namespace {
     void spillAll(MachineInstr *MI);
     bool setPhysReg(MachineInstr *MI, unsigned OpNum, unsigned PhysReg);
     void addRetOperands(MachineBasicBlock *MBB);
+    bool handleGCRegRoot(MachineInstr *MI);
   };
   char RAFast::ID = 0;
 }
@@ -772,6 +774,35 @@ void RAFast::handleThroughOperands(MachineInstr *MI,
     UsedInInstr.set(PartialDefs[i]);
 }
 
+bool RAFast::handleGCRegRoot(MachineInstr *MI) {
+  MachineOperand &MO = MI->getOperand(0);
+  if (!MO.isReg())
+    return false;
+
+  unsigned Reg = MO.getReg();
+  if (!TargetRegisterInfo::isVirtualRegister(Reg))
+    return false;
+
+  LiveRegMap::iterator LRI = findLiveVirtReg(Reg);
+  if (LRI != LiveVirtRegs.end()) {
+    setPhysReg(MI, 0, LRI->PhysReg);
+    return true;
+  }
+
+  int FrameIndex = StackSlotForVirtReg[Reg];
+  unsigned RootIndex = MI->getOperand(1).getImm();
+  DebugLoc DL = MI->getDebugLoc();
+
+  MachineInstr *NewMI = TII->emitFrameIndexGCRegRoot(*MF, FrameIndex,
+                                                     RootIndex, DL);
+  MachineBasicBlock *MBB = MI->getParent();
+  MBB->insert(MBB->erase(MI), NewMI);
+
+  GCFunctionInfo &GCFI = MF->getGMI()->getFunctionInfo(*MF->getFunction());
+  GCFI.spillRegRoot(RootIndex, FrameIndex);
+  return true;                       
+}
+
 /// addRetOperand - ensure that a return instruction has an operand for each
 /// value live out of the function.
 ///
@@ -929,6 +960,13 @@ void RAFast::AllocateBasicBlock() {
         }
       }
       // Next instruction.
+      continue;
+    }
+
+    // GC register roots need special care here, since inserting reloads can
+    // break the call sequence.
+    if (MI->isGCRegRoot()) {
+      handleGCRegRoot(MI);
       continue;
     }
 
