@@ -60,7 +60,7 @@ bool LiveIRVariables::runOnFunction(Function &F) {
   computeReducedReachability(F);
   computeReachableBackEdges(F);
 
-  DEBUG(dump(F));
+  //DEBUG(dump(F));
 
   return false;
 }
@@ -79,24 +79,33 @@ void LiveIRVariables::computeDFSOrdering(BasicBlock &BB) {
 void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
   IncomingEdges.resize(F.size(), 0);
 
-  SmallSet<BasicBlock *, 16> BlocksSeen;
-  SmallVector<BasicBlock *, 16> WorkList;
+  SmallSet<BasicBlock *, 256> BlocksSeen;
+  SmallSet<BasicBlock *, 256> PathToNode;
+  SmallVector<BasicBlock *, 256> WorkList;
   WorkList.push_back(&F.getEntryBlock());
 
-  for (SmallVector<BasicBlock *, 16>::iterator BBI = WorkList.begin();
-                                               BBI != WorkList.end(); ++BBI) {
-    if (BlocksSeen.count(*BBI))
+  while (!WorkList.empty()) {
+    BasicBlock *BB = WorkList.back();
+    if (BlocksSeen.count(BB)) {
+      PathToNode.erase(BB);
+      WorkList.pop_back();
       continue;
-    BlocksSeen.insert(*BBI);
+    }
+    BlocksSeen.insert(BB);
+    PathToNode.insert(BB);
 
-    for (succ_iterator SI = succ_begin(*BBI),
-                       SE = succ_end(*BBI); SI != SE; ++SI) {
-      if (BlocksSeen.count(*SI)) {
-        BackEdges.insert(std::make_pair(*BBI, *SI));
+    for (succ_iterator SI = succ_begin(BB),
+                       SE = succ_end(BB); SI != SE; ++SI) {
+      if (PathToNode.count(*SI)) {
+        BackEdges.insert(std::make_pair(BB, *SI));
         continue;
       }
 
       ++IncomingEdges[DFSOrdering.idFor(*SI) - 1];
+
+      if (BlocksSeen.count(*SI)) {
+        continue;
+      }
       WorkList.push_back(*SI);
     }
   }
@@ -113,7 +122,7 @@ void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
     for (succ_iterator SI = succ_begin(&*BBI),
                        SE = succ_end(&*BBI); SI != SE; ++SI) {
       if (BackEdges.count(std::make_pair(&*BBI, *SI)))
-        DEBUG(dbgs() << &*BBI << " -> " << *SI << "\n");
+        DEBUG(dbgs() << DFSOrdering.idFor(&*BBI)-1 << " -> " << DFSOrdering.idFor(*SI)-1 << "\n");
     }
   }
 #endif
@@ -127,10 +136,10 @@ void LiveIRVariables::computeTopologicalOrdering(Function &F,
   assert(IncomingEdges.size() == F.size() &&
          "Incoming edges not computed yet!");
 
-  SmallVector<unsigned, 16> ProcessedIncomingEdges;
+  SmallVector<unsigned, 256> ProcessedIncomingEdges;
   ProcessedIncomingEdges.resize(F.size(), 0);
 
-  SmallVector<BasicBlock *, 16> WorkList;
+  SmallVector<BasicBlock *, 256> WorkList;
   WorkList.push_back(&F.getEntryBlock());
 
   while (!WorkList.empty()) {
