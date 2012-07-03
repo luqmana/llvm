@@ -546,8 +546,8 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
   SmallVector<Instruction *, 32> Roots;
 
   bool MadeChange = false;
-  for (Function::iterator BB = F.begin(), E = F.end(); BB != E; ++BB) {
-    for (BasicBlock::iterator II = BB->begin(), E = BB->end(); II != E;) {
+  for (Function::iterator BB = F.begin(), BE = F.end(); BB != BE; ++BB) {
+    for (BasicBlock::iterator II = BB->begin(), IE = BB->end(); II != IE;) {
       if (IntrinsicInst *CI = dyn_cast<IntrinsicInst>(II++)) {
         Function *F = CI->getCalledFunction();
         switch (F->getIntrinsicID()) {
@@ -573,7 +573,7 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
           if (InitRoots) {
             // Initialize the GC root, but do not delete the intrinsic. The
             // backend needs the intrinsic to flag the stack slot.
-            Value *V = CI->getArgOperand(0)->stripPointerCasts();
+            Value *V = CI->getArgOperand(0)->stripPointerCastsOnly();
             Roots.push_back(cast<Instruction>(V));
           }
           break;

@@ -325,6 +325,7 @@ void Value::replaceAllUsesWith(Value *New) {
 namespace {
 // Various metrics for how much to strip off of pointers.
 enum PointerStripKind {
+  PSK_None,
   PSK_ZeroIndices,
   PSK_InBoundsConstantIndices,
   PSK_InBounds
@@ -343,6 +344,8 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
   do {
     if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
       switch (StripKind) {
+      case PSK_None:
+        return V;
       case PSK_ZeroIndices:
         if (!GEP->hasAllZeroIndices())
           return V;
@@ -372,6 +375,10 @@ static Value *stripPointerCastsAndOffsets(Value *V) {
   return V;
 }
 } // namespace
+
+Value *Value::stripPointerCastsOnly() {
+  return stripPointerCastsAndOffsets<PSK_None>(this);
+}
 
 Value *Value::stripPointerCasts() {
   return stripPointerCastsAndOffsets<PSK_ZeroIndices>(this);

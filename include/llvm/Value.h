@@ -263,6 +263,14 @@ public:
     return true; // Values are always values.
   }
 
+  /// stripPointerCasts - This method strips off any unneeded pointer
+  /// casts, returning the original uncasted value. If this is called
+  /// on a non-pointer value, it returns 'this'.
+  Value *stripPointerCastsOnly();
+  const Value *stripPointerCastsOnly() const {
+    return const_cast<Value*>(this)->stripPointerCastsOnly();
+  }
+
   /// stripPointerCasts - This method strips off any unneeded pointer casts and
   /// all-zero GEPs from the specified value, returning the original uncasted
   /// value. If this is called on a non-pointer value, it returns 'this'.
