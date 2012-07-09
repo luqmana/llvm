@@ -31,11 +31,20 @@
 using namespace llvm;
 
 namespace {
+  struct SafePoint {
+    SafePoint(MCSymbol *loc, MCSymbol *meta, MCSymbol *fn) : Location(loc), Metadata(meta), FnMetadata(fn) {}
+    MCSymbol *Location;
+    MCSymbol *Metadata;
+    MCSymbol *FnMetadata;
+  };
+
   class GenericGCMetadataPrinter : public GCMetadataPrinter {
     void writeCalleeSavedRegs(AsmPrinter &AP, GCFunctionInfo &FI);
     void writeSafePointInfo(AsmPrinter &AP, GCFunctionInfo &FI,
                             unsigned Index);
-    void writeFunctionMetadata(AsmPrinter &AP, GCFunctionInfo &FI);
+    void writeFunctionMetadata(AsmPrinter &AP, GCFunctionInfo &FI,
+                               std::vector<SafePoint>& SP);
+    void writeModuleMetadata(AsmPrinter &AP, std::vector<SafePoint>& SP);
     static void alignToPointer(AsmPrinter &AP);
 
   public:
@@ -124,7 +133,8 @@ void GenericGCMetadataPrinter::writeSafePointInfo(AsmPrinter &AP,
 }
 
 void GenericGCMetadataPrinter::writeFunctionMetadata(AsmPrinter &AP,
-                                                     GCFunctionInfo &FI) {
+                                                     GCFunctionInfo &FI,
+                                                     std::vector<SafePoint>& SP) {
   unsigned PtrSize = AP.TM.getTargetData()->getPointerSize();
 
   StringRef Name = FI.getFunction().getName();
@@ -157,6 +167,7 @@ void GenericGCMetadataPrinter::writeFunctionMetadata(AsmPrinter &AP,
     AP.OutStreamer.EmitSymbolValue(PI->Label, PtrSize);
     AP.OutStreamer.EmitSymbolValue(Sym, PtrSize);
     Symbols.push_back(Sym);
+    SP.push_back(SafePoint(PI->Label, Sym, FnMetadataSym));
   }
 
   // Emit the info for each safe point.
@@ -167,11 +178,37 @@ void GenericGCMetadataPrinter::writeFunctionMetadata(AsmPrinter &AP,
   }
 }
 
+void GenericGCMetadataPrinter::writeModuleMetadata(AsmPrinter &AP,
+                                                   std::vector<SafePoint>& SP) {
+  unsigned PtrSize = AP.TM.getTargetData()->getPointerSize();
+
+  // Emit the module metadata symbol.
+  SmallString<128> MetadataName;
+  StringRef ModuleName = getModule().getModuleIdentifier();
+  AP.Mang->getNameWithPrefix(MetadataName, "_gc_module_metadata_" + ModuleName);
+  MCSymbol *MetadataSym = AP.OutContext.GetOrCreateSymbol(MetadataName);
+  AP.OutStreamer.EmitSymbolAttribute(MetadataSym, MCSA_Global);
+  alignToPointer(AP);
+  AP.OutStreamer.EmitLabel(MetadataSym);
+
+  // Emit safe point list.
+  AP.EmitInt32(SP.size());
+  alignToPointer(AP);
+  for (std::vector<SafePoint>::iterator SPI = SP.begin(),
+                                        SPE = SP.end(); SPI != SPE; ++SPI) {
+    AP.OutStreamer.EmitSymbolValue(SPI->Location, PtrSize);
+    AP.OutStreamer.EmitSymbolValue(SPI->Metadata, PtrSize);
+    AP.OutStreamer.EmitSymbolValue(SPI->FnMetadata, PtrSize);
+  }
+}
+
 void GenericGCMetadataPrinter::beginAssembly(AsmPrinter &AP) {
 }
 
 void GenericGCMetadataPrinter::finishAssembly(AsmPrinter &AP) {
   AP.OutStreamer.SwitchSection(AP.getObjFileLowering().getDataSection());
+  std::vector<SafePoint> SP;
   for (iterator II = begin(), IE = end(); II != IE; ++II)
-    writeFunctionMetadata(AP, **II);
+    writeFunctionMetadata(AP, **II, SP);
+  writeModuleMetadata(AP, SP);
 }
