@@ -86,6 +86,16 @@ ifndef TARGET_NATIVE_ARCH
 TARGET_NATIVE_ARCH := $(ARCH)
 endif
 
+PYTHONVERSION := $(shell expr `python -V 2>&1 | cut -f1 -d. | sed -e 's/Python //'`)
+
+ifeq "$(PYTHONVERSION)" "3"
+    PYTHON := python2
+endif
+
+ifndef PYTHON
+    PYTHON := python
+endif
+
 # The rule to create the LLVMBuild Makefile fragment as well as the llvm-config
 # library table.
 #
@@ -97,7 +107,7 @@ endif
 $(LLVMBuildMakeFrag): $(PROJ_SRC_ROOT)/Makefile.rules \
 		      $(PROJ_OBJ_ROOT)/Makefile.config
 	$(Echo) Constructing LLVMBuild project information.
-	$(Verb) $(LLVMBuildTool) \
+	$(Verb) $(PYTHON) $(LLVMBuildTool) \
 	  --native-target "$(TARGET_NATIVE_ARCH)" \
 	  --enable-targets "$(TARGETS_TO_BUILD)" \
 	  --enable-optional-components "$(OPTIONAL_COMPONENTS)" \
