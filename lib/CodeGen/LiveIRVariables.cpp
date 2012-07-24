@@ -22,7 +22,7 @@
 #include "llvm/Function.h"
 #include "llvm/Pass.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallMap.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/Dominators.h"

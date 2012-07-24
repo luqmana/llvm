@@ -24,7 +24,7 @@
 #include "llvm/Pass.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SmallMap.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/UniqueVector.h"
 #include <vector>
