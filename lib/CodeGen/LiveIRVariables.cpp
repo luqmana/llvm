@@ -48,6 +48,7 @@ void LiveIRVariables::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool LiveIRVariables::runOnFunction(Function &F) {
   DEBUG(dbgs() << "********** LIVE IR VARIABLES **********\n");
+  DEBUG(dbgs() << "Function: " << F.getName() << "\n");
 
   DFSOrdering.reset();
   BackEdges.clear();
@@ -57,6 +58,24 @@ bool LiveIRVariables::runOnFunction(Function &F) {
 
   computeDFSOrdering(F.getEntryBlock());
   computeBackAndIncomingEdges(F);
+
+#ifndef NDEBUG
+  DEBUG(dbgs() << "Basic block graph by DFS Ordering:\n");
+  DEBUG(dbgs() << "digraph {\n");
+  for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
+    for (succ_iterator SI = succ_begin(&*BBI),
+           SE = succ_end(&*BBI); SI != SE; ++SI) {
+      DEBUG(dbgs() << "  " << DFSOrdering.idFor(&*BBI)-1 << " -> " << DFSOrdering.idFor(*SI)-1);
+      if (BackEdges.count(std::make_pair(&*BBI, *SI))) {
+        DEBUG(dbgs() << "[color = red];\n");
+      } else {
+        DEBUG(dbgs() << "\n");
+      }
+    }
+  }
+  DEBUG(dbgs() << "}\n");
+#endif
+
   computeReducedReachability(F);
   computeReachableBackEdges(F);
 
