@@ -63,10 +63,12 @@ bool LiveIRVariables::runOnFunction(Function &F) {
   DEBUG(dbgs() << "Basic block graph by DFS Ordering:\n");
   DEBUG(dbgs() << "digraph {\n");
   for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
+    unsigned b = DFSOrdering.idFor(BBI) - 1;
     for (succ_iterator SI = succ_begin(&*BBI),
            SE = succ_end(&*BBI); SI != SE; ++SI) {
-      DEBUG(dbgs() << "  " << DFSOrdering.idFor(&*BBI)-1 << " -> " << DFSOrdering.idFor(*SI)-1);
-      if (BackEdges.count(std::make_pair(&*BBI, *SI))) {
+      unsigned s = DFSOrdering.idFor(*SI) - 1;
+      DEBUG(dbgs() << "  " << b << " -> " << s);
+      if (BackEdges[b].test(s)) {
         DEBUG(dbgs() << "[color = red];\n");
       } else {
         DEBUG(dbgs() << "\n");
@@ -97,6 +99,10 @@ void LiveIRVariables::computeDFSOrdering(BasicBlock &BB) {
 
 void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
   IncomingEdges.resize(F.size(), 0);
+  BackEdges.resize(F.size());
+  for (unsigned i = 0; i < F.size(); i++) {
+    BackEdges[i].resize(F.size());
+  }
 
   SmallSet<BasicBlock *, 256> BlocksSeen;
   SmallSet<BasicBlock *, 256> PathToNode;
@@ -105,6 +111,7 @@ void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
 
   while (!WorkList.empty()) {
     BasicBlock *BB = WorkList.back();
+    unsigned b = DFSOrdering.idFor(BB) - 1;
     if (BlocksSeen.count(BB)) {
       PathToNode.erase(BB);
       WorkList.pop_back();
@@ -115,12 +122,14 @@ void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
 
     for (succ_iterator SI = succ_begin(BB),
                        SE = succ_end(BB); SI != SE; ++SI) {
+      unsigned s = DFSOrdering.idFor(*SI) - 1;
+
       if (PathToNode.count(*SI)) {
-        BackEdges.insert(std::make_pair(BB, *SI));
+        BackEdges[b].set(s);
         continue;
       }
 
-      ++IncomingEdges[DFSOrdering.idFor(*SI) - 1];
+      ++IncomingEdges[s];
 
       if (BlocksSeen.count(*SI)) {
         continue;
@@ -140,7 +149,7 @@ void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
   for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
     for (succ_iterator SI = succ_begin(&*BBI),
                        SE = succ_end(&*BBI); SI != SE; ++SI) {
-      if (BackEdges.count(std::make_pair(&*BBI, *SI)))
+      if (BackEdges[DFSOrdering.idFor(BBI) - 1].test(DFSOrdering.idFor(*SI) - 1))
         DEBUG(dbgs() << DFSOrdering.idFor(&*BBI)-1 << " -> " << DFSOrdering.idFor(*SI)-1 << "\n");
     }
   }
@@ -173,7 +182,7 @@ void LiveIRVariables::computeTopologicalOrdering(Function &F,
 
     for (succ_iterator SI = succ_begin(BB),
                        SE = succ_end(BB); SI != SE; ++SI) {
-      if (BackEdges.count(std::make_pair(BB, *SI)))
+      if (BackEdges[DFSOrdering.idFor(BB) - 1].test(DFSOrdering.idFor(*SI) - 1))
         continue;
 
       unsigned DFSID = DFSOrdering.idFor(*SI) - 1;
@@ -242,15 +251,13 @@ void LiveIRVariables::computeReachableBackEdges(Function &F) {
       if (!ReachableBV[s])
         continue;
 
-      BasicBlock *SBB = DFSOrdering[s + 1];
       for (unsigned t = 0, te = ReachableBV.size(); t != te; ++t) {
         // The target must not be reachable.
         if (ReachableBV[t])
           continue;
 
         // And there must be a back edge from the source to the target.
-        BasicBlock *TBB = DFSOrdering[t + 1];
-        if (!BackEdges.count(std::make_pair(SBB, TBB)))
+        if (!BackEdges[s].test(t))
           continue;
 
         assert(t <= i && "Theorem 3 was violated!");
@@ -306,7 +313,7 @@ bool LiveIRVariables::isLiveIn(Value &V, BasicBlock &BB) {
 bool LiveIRVariables::isBackEdgeTarget(BasicBlock &BB) {
   for (pred_iterator PI = pred_begin(&BB),
                      PE = pred_end(&BB); PI != PE; ++PI) {
-    if (BackEdges.count(std::make_pair(*PI, &BB)))
+    if (BackEdges[DFSOrdering.idFor(*PI) - 1].test(DFSOrdering.idFor(&BB) - 1))
       return true;
   }
   return false;

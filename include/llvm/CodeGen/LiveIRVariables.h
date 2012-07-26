@@ -61,7 +61,7 @@ public:
 
 private:
   UniqueVector<BasicBlock *> DFSOrdering;
-  DenseSet< std::pair<BasicBlock *, BasicBlock *> > BackEdges;
+  std::vector<BitVector> BackEdges;
   std::vector<unsigned> IncomingEdges;          // Number of incoming edges.
   std::vector<BitVector> ReducedReachability;   // R_q in the paper
   std::vector<BitVector> ReachableBackEdges;    // T_q in the paper
