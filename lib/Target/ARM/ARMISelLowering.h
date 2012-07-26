@@ -367,7 +367,8 @@ namespace llvm {
     /// createFastISel - This method returns a target specific FastISel object,
     /// or null if the target does not support "fast" ISel.
     virtual FastISel *createFastISel(FunctionLoweringInfo &funcInfo,
-                                     const TargetLibraryInfo *libInfo) const;
+                                     const TargetLibraryInfo *libInfo,
+                                     GCFunctionInfo &gcInfo) const;
 
     Sched::Preference getSchedulingPreference(SDNode *N) const;
 
@@ -551,7 +552,8 @@ namespace llvm {
 
   namespace ARM {
     FastISel *createFastISel(FunctionLoweringInfo &funcInfo,
-                             const TargetLibraryInfo *libInfo);
+                             const TargetLibraryInfo *libInfo,
+                             GCFunctionInfo &gcInfo);
   }
 }
 
