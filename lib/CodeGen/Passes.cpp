@@ -364,6 +364,9 @@ void TargetPassConfig::addIRPasses() {
       addPass(createPrintFunctionPass("\n\n*** Code after LSR ***\n", &dbgs()));
   }
 
+  if (getOptLevel() == CodeGenOpt::None) {
+    addPass(createCFGSimplificationPass());
+  }
   addPass(createGCLoweringPass());
 
   // Make sure that no unreachable blocks are instruction selected.
