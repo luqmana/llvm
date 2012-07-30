@@ -1,4 +1,4 @@
-//===- LiveIRVariables.cpp - IR variable liveness ---------------*- C++ -*-===//
+//===- LiveIRVariables.cpp - Live Variable Analysis for IR ----------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,11 +7,17 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the SSA-based liveness analysis described in this
-// paper:
+// This file implements the LiveIRVariables analysis pass.  For each instruction
+// in the function, this pass calculates the set of values that are immediately
+// dead after the instruction (i.e., the instruction calculates the value, but
+// it is never used) and the set of values that are used by the instruction, but
+// are never used after the instruction (i.e., they are killed).
 //
-//   Boissinot, Hack, Grund, de Dinechin, Rastello, "Fast Liveness Checking for
-//   SSA-Form Programs," INRIA Research Report No. RR-2007-45 (2007).
+// This class computes live variable information for each instruction and
+// argument in a function using a sparse implementation based on SSA form.  It
+// uses the dominance properties of SSA form to efficiently compute liveness of
+// values, by walking the graph of uses back to the initial definition of each
+// value.
 //
 // Currently it is used to track liveness of garbage collector roots.
 //
@@ -20,12 +26,10 @@
 #define DEBUG_TYPE "liveness"
 
 #include "llvm/Function.h"
+#include "llvm/Instructions.h"
 #include "llvm/Pass.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/CodeGen/LiveIRVariables.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
@@ -36,247 +40,140 @@ using namespace llvm;
 char LiveIRVariables::ID = 0;
 INITIALIZE_PASS_BEGIN(LiveIRVariables, "liveness", "Live IR Variables", false,
                       true)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree);
 INITIALIZE_PASS_END(LiveIRVariables, "liveness", "Live IR Variables", false,
                     true)
 
-void LiveIRVariables::getAnalysisUsage(AnalysisUsage &AU) const {
+void
+LiveIRVariables::getAnalysisUsage(AnalysisUsage &AU) const {
   FunctionPass::getAnalysisUsage(AU);
-  AU.addRequired<DominatorTree>();
   AU.setPreservesAll();
 }
 
-bool LiveIRVariables::runOnFunction(Function &F) {
+bool
+LiveIRVariables::runOnFunction(Function &F) {
   DEBUG(dbgs() << "********** LIVE IR VARIABLES **********\n");
-  DEBUG(dbgs() << "Function: " << F.getName() << "\n");
 
   DFSOrdering.reset();
-  BackEdges.clear();
-  IncomingEdges.clear();
-  ReducedReachability.clear();
-  ReachableBackEdges.clear();
 
-  computeDFSOrdering(F.getEntryBlock());
-  computeBackAndIncomingEdges(F);
+  ComputeDFSOrdering(F);
+  ComputeLiveSets(F);
 
-#ifndef NDEBUG
-  DEBUG(dbgs() << "Basic block graph by DFS Ordering:\n");
-  DEBUG(dbgs() << "digraph {\n");
-  for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
-    unsigned b = DFSOrdering.idFor(BBI) - 1;
-    for (succ_iterator SI = succ_begin(&*BBI),
-           SE = succ_end(&*BBI); SI != SE; ++SI) {
-      unsigned s = DFSOrdering.idFor(*SI) - 1;
-      DEBUG(dbgs() << "  " << b << " -> " << s);
-      if (BackEdges[b].test(s)) {
-        DEBUG(dbgs() << "[color = red];\n");
-      } else {
-        DEBUG(dbgs() << "\n");
-      }
-    }
-  }
-  DEBUG(dbgs() << "}\n");
-#endif
-
-  computeReducedReachability(F);
-  computeReachableBackEdges(F);
-
-  //DEBUG(dump(F));
+  DEBUG(dump(F, false));
 
   return false;
 }
 
-void LiveIRVariables::computeDFSOrdering(BasicBlock &BB) {
-  if (DFSOrdering.idFor(&BB) != 0)
-    return;
-
-  DEBUG(dbgs() << "Basic block " << DFSOrdering.size() << ":\n" << BB);
-
-  DFSOrdering.insert(&BB);
-  for (succ_iterator SI = succ_begin(&BB), SE = succ_end(&BB); SI != SE; ++SI)
-    computeDFSOrdering(**SI);
+void
+LiveIRVariables::ComputeDFSOrdering(const Function &F) {
+  for (df_iterator<const BasicBlock *> DI = df_begin(&F.getEntryBlock()),
+       DE = df_end(&F.getEntryBlock()); DI != DE; ++DI) {
+    DFSOrdering.insert(*DI);
+  }
 }
 
-void LiveIRVariables::computeBackAndIncomingEdges(Function &F) {
-  IncomingEdges.resize(F.size(), 0);
-  BackEdges.resize(F.size());
-  for (unsigned i = 0; i < F.size(); i++) {
-    BackEdges[i].resize(F.size());
-  }
+void
+LiveIRVariables::ComputeLiveSets(const Function &F) {
+  // Calculate live variable information in depth first order on the
+  // CFG of the function. This guarantees that we will see the
+  // definition of a virtual register before its uses due to dominance
+  // properties of SSA (except for PHI nodes, which are treated as a
+  // special case).
+  for (df_iterator<const BasicBlock *> DI = df_begin(&F.getEntryBlock()),
+       DE = df_end(&F.getEntryBlock()); DI != DE; ++DI) {
+    const BasicBlock &BB = **DI;
 
-  SmallSet<BasicBlock *, 256> BlocksSeen;
-  SmallSet<BasicBlock *, 256> PathToNode;
-  SmallVector<BasicBlock *, 256> WorkList;
-  WorkList.push_back(&F.getEntryBlock());
+    // Loop over all of the instructions, processing them.
+    for (BasicBlock::const_iterator II = BB.begin(),
+         IE = BB.end(); II != IE; ++II) {
+      const Instruction &I = *II;
 
-  while (!WorkList.empty()) {
-    BasicBlock *BB = WorkList.back();
-    unsigned b = DFSOrdering.idFor(BB) - 1;
-    if (BlocksSeen.count(BB)) {
-      PathToNode.erase(BB);
-      WorkList.pop_back();
-      continue;
-    }
-    BlocksSeen.insert(BB);
-    PathToNode.insert(BB);
+      // Process all of the operands of the instruction, unless it is
+      // a PHI node. In this case, ONLY process the value defined by
+      // the PHI node, not any of the uses. They will be handled in
+      // other basic blocks.
+      if (!isa<PHINode>(&I)) {
+        for (User::const_op_iterator OI = I.op_begin(),
+             OE = I.op_end(); OI != OE; ++OI) {
+          const Value &V = **OI;
 
-    for (succ_iterator SI = succ_begin(BB),
-                       SE = succ_end(BB); SI != SE; ++SI) {
-      unsigned s = DFSOrdering.idFor(*SI) - 1;
-
-      if (PathToNode.count(*SI)) {
-        BackEdges[b].set(s);
-        continue;
+          if (isa<Instruction>(V) || isa<Argument>(V)) {
+            HandleUse(V, I);
+          }
+        }
       }
 
-      ++IncomingEdges[s];
-
-      if (BlocksSeen.count(*SI)) {
-        continue;
-      }
-      WorkList.push_back(*SI);
-    }
-  }
-
-#ifndef NDEBUG
-  DEBUG(dbgs() << "Computed incoming edges:\n");
-  for (unsigned i = 0, ie = IncomingEdges.size(); i != ie; ++i) {
-    DEBUG(dbgs() << "Basic block " << i << " has " << IncomingEdges[i]);
-    DEBUG(dbgs() << " incoming edges.\n");
-  }
-
-  DEBUG(dbgs() << "Back edges:\n");
-  for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
-    for (succ_iterator SI = succ_begin(&*BBI),
-                       SE = succ_end(&*BBI); SI != SE; ++SI) {
-      if (BackEdges[DFSOrdering.idFor(BBI) - 1].test(DFSOrdering.idFor(*SI) - 1))
-        DEBUG(dbgs() << DFSOrdering.idFor(&*BBI)-1 << " -> " << DFSOrdering.idFor(*SI)-1 << "\n");
-    }
-  }
-#endif
-}
-
-// Topologically sorts the basic blocks in the function and writes the ordering
-// into the supplied unique vector. The back and incoming edges must have been
-// computed first.
-void LiveIRVariables::computeTopologicalOrdering(Function &F,
-                                       UniqueVector<BasicBlock *> &Ordering) {
-  assert(IncomingEdges.size() == F.size() &&
-         "Incoming edges not computed yet!");
-
-  SmallVector<unsigned, 256> ProcessedIncomingEdges;
-  ProcessedIncomingEdges.resize(F.size(), 0);
-
-  SmallVector<BasicBlock *, 256> WorkList;
-  WorkList.push_back(&F.getEntryBlock());
-
-  while (!WorkList.empty()) {
-    BasicBlock *BB = WorkList.back();
-    WorkList.pop_back();
-
-    DEBUG(dbgs() << "Assigning topological order " << Ordering.size());
-    DEBUG(dbgs() << " to basic block with DFS order ");
-    DEBUG(dbgs() << (DFSOrdering.idFor(BB) - 1) << "\n");
-
-    Ordering.insert(BB);
-
-    for (succ_iterator SI = succ_begin(BB),
-                       SE = succ_end(BB); SI != SE; ++SI) {
-      if (BackEdges[DFSOrdering.idFor(BB) - 1].test(DFSOrdering.idFor(*SI) - 1))
-        continue;
-
-      unsigned DFSID = DFSOrdering.idFor(*SI) - 1;
-      unsigned ProcessedEdges = ++ProcessedIncomingEdges[DFSID];
-      if (ProcessedEdges == IncomingEdges[DFSID])
-        WorkList.push_back(*SI);
+      // Process value defined by instruction.
+      HandleDef(I);
     }
   }
 }
 
-// Computes reduced reachability. A basic block B is reduced reachable from a
-// basic block A if A has a path to B that passes through no blocks that
-// dominate A.
-void LiveIRVariables::computeReducedReachability(Function &F) {
-  // Compute a topological ordering.
-  UniqueVector<BasicBlock *> TopologicalOrdering;
-  computeTopologicalOrdering(F, TopologicalOrdering);
+void
+LiveIRVariables::HandleUse(const Value &Op, const Instruction &I) {
+  const BasicBlock &BB = *I.getParent();
+  unsigned BBNum = DFSOrdering.idFor(&BB) - 1;
 
-  // Initialize the reduced reachability matrix.
-  ReducedReachability.resize(DFSOrdering.size());
+  LivenessInfo &LInfo = getLivenessInfo(Op);
 
-  // Iterate over the basic blocks in reverse order, building up the reduced
-  // reachability matrix.
-  for (unsigned i = TopologicalOrdering.size() - 1; i != (unsigned)-1; --i) {
-    BasicBlock *BB = TopologicalOrdering[i + 1];
-
-    unsigned BBIndex = DFSOrdering.idFor(BB) - 1;
-    BitVector &BV = ReducedReachability[BBIndex];
-    BV.resize(DFSOrdering.size());
-    BV[BBIndex] = true;
-
-    for (succ_iterator SI = succ_begin(BB),
-                       SE = succ_end(BB); SI != SE; ++SI) {
-      if (TopologicalOrdering.idFor(*SI) - 1 < i)
-        continue;   // Ignore back edges.
-
-      unsigned SuccessorIndex = DFSOrdering.idFor(*SI) - 1;
-      BV.set(SuccessorIndex);
-      BV |= ReducedReachability[SuccessorIndex];
+  // Check to see if this basic block is one of the killing blocks.  If so,
+  // remove it.
+  for (unsigned i = 0, e = LInfo.Kills.size(); i != e; ++i)
+    if (LInfo.Kills[i]->getParent() == &BB) {
+      LInfo.Kills.erase(LInfo.Kills.begin()+i);  // Erase entry
+      break;
     }
+
+  // This situation can occur:
+  //
+  //     ,------.
+  //     |      |
+  //     |      v
+  //     |   t2 = phi ... t1 ...
+  //     |      |
+  //     |      v
+  //     |   t1 = ...
+  //     |  ... = ... t1 ...
+  //     |      |
+  //     `------'
+  //
+  // where there is a use in a PHI node that's a predecessor to the defining
+  // block. We don't want to mark all predecessors as having the value "alive"
+  // in this case.
+  if (&BB == &getDefiningBlock(Op)) return;
+
+  // Add a new kill entry for this basic block. If this value is
+  // already marked as alive in this basic block, that means it is
+  // alive in at least one of the successor blocks, it's not a kill.
+  if (!LInfo.AliveBlocks.test(BBNum)) {
+    LInfo.Kills.push_back(&I);
   }
 
-#ifndef NDEBUG
-  for (unsigned i = 0, ie = ReducedReachability.size(); i != ie; ++i) {
-    DEBUG(dbgs() << "Reduced reachability of " << i << ":");
-    BitVector &BV = ReducedReachability[i];
-    for (unsigned j = 0, je = BV.size(); j != je; ++j) {
-      if (BV[j])
-        DEBUG(dbgs() << " " << j);
-    }
-    DEBUG(dbgs() << "\n");
-  }
-#endif
-}
-
-void LiveIRVariables::computeReachableBackEdges(Function &F) {
-  ReachableBackEdges.resize(F.size());
-  for (unsigned i = 0, ie = DFSOrdering.size(); i != ie; ++i) {
-    BitVector &TargetBV = ReachableBackEdges[i];
-    TargetBV.resize(F.size());
-    TargetBV[i] = true;
-
-    BitVector &ReachableBV = ReducedReachability[i];
-    for (unsigned s = 0, se = ReachableBV.size(); s != se; ++s) {
-      // The source must be reachable.
-      if (!ReachableBV[s])
-        continue;
-
-      for (unsigned t = 0, te = ReachableBV.size(); t != te; ++t) {
-        // The target must not be reachable.
-        if (ReachableBV[t])
-          continue;
-
-        // And there must be a back edge from the source to the target.
-        if (!BackEdges[s].test(t))
-          continue;
-
-        assert(t <= i && "Theorem 3 was violated!");
-        TargetBV |= ReachableBackEdges[t];
-      }
-    }
-
-#ifndef NDEBUG
-    DEBUG(dbgs() << "Back edge targets for " << i << ":");
-    for (unsigned j = 0, je = TargetBV.size(); j != je; ++j) {
-      if (TargetBV[j])
-        DEBUG(dbgs() << " " << j);
-    }
-    DEBUG(dbgs() << "\n");
-#endif
+  // Update all dominating blocks to mark them as "known live".
+  for (const_pred_iterator PI = pred_begin(&BB),
+         PE = pred_end(&BB); PI != PE; ++PI) {
+    MarkAliveInBlock(LInfo, getDefiningBlock(Op), **PI);
   }
 }
 
-BasicBlock &LiveIRVariables::getDefiningBlock(Value &V) {
+void
+LiveIRVariables::HandleDef(const Instruction &I) {
+  LivenessInfo &LInfo = getLivenessInfo(I);
+
+  if (LInfo.AliveBlocks.empty())
+    // If value is not alive in any block, then defaults to dead.
+    LInfo.Kills.push_back(&I);
+}
+
+LiveIRVariables::LivenessInfo &
+LiveIRVariables::getLivenessInfo(const Value &V) {
+  if (!Liveness.count(&V)) {
+    Liveness.insert(std::pair<const Value *, LiveIRVariables::LivenessInfo>(&V, LivenessInfo()));
+  }
+  return Liveness[&V];
+}
+
+const BasicBlock &
+LiveIRVariables::getDefiningBlock(const Value &V) {
   if (isa<Argument>(V))
     return cast<Argument>(V).getParent()->getEntryBlock();
   if (isa<Instruction>(V))
@@ -285,84 +182,138 @@ BasicBlock &LiveIRVariables::getDefiningBlock(Value &V) {
   llvm_unreachable("Only arguments and instructions have definition sites!");
 }
 
-bool LiveIRVariables::isLiveIn(Value &V, BasicBlock &BB) {
-  DominatorTree &DT = getAnalysis<DominatorTree>();
-  BasicBlock &DefBB = getDefiningBlock(V);
+void
+LiveIRVariables::MarkAliveInBlock(LivenessInfo &LInfo,
+                                  const BasicBlock &DefBlock,
+                                  const BasicBlock &BB) {
+  std::vector<const BasicBlock *> WorkList;
+  MarkAliveInBlock(LInfo, DefBlock, BB, WorkList);
 
-  BitVector &BackEdges = ReachableBackEdges[DFSOrdering.idFor(&BB) - 1];
-  for (int i = BackEdges.find_first(); i != -1; i = BackEdges.find_next(i)) {
-    BasicBlock &ReachableBB = *DFSOrdering[i + 1];
+  while (!WorkList.empty()) {
+    const BasicBlock &Pred = *WorkList.back();
+    WorkList.pop_back();
+    MarkAliveInBlock(LInfo, DefBlock, Pred, WorkList);
+  }
+}
 
-    // Ignore back edge targets that leave the dominance tree of def(V) and
-    // reenter it.
-    if (!DT.properlyDominates(&DefBB, &ReachableBB))
-      continue;
+void
+LiveIRVariables::MarkAliveInBlock(LivenessInfo& LInfo,
+                                  const BasicBlock &DefBlock,
+                                  const BasicBlock &BB,
+                                  std::vector<const BasicBlock *> &WorkList) {
+  const Function &F = *BB.getParent();
+  unsigned BBNum = DFSOrdering.idFor(&BB) - 1;
 
-    BitVector &ReachableBlocks = ReducedReachability[i];
-    for (int j = ReachableBlocks.find_first(); j != -1;
-         j = ReachableBlocks.find_next(j)) {
-      // FIXME: Precompute this to speed this up.
-      if (V.isUsedInBasicBlock(DFSOrdering[j + 1]))
-        return true;
+  // Check to see if this basic block is one of the killing blocks.  If so,
+  // remove it.
+  for (unsigned i = 0, e = LInfo.Kills.size(); i != e; ++i) {
+    if (LInfo.Kills[i]->getParent() == &BB) {
+      LInfo.Kills.erase(LInfo.Kills.begin() + i);  // Erase entry
+      break;
     }
   }
 
-  return false;
+  if (&BB == &DefBlock) return;  // Terminate recursion
+
+  if (LInfo.AliveBlocks.test(BBNum)) {
+    return;  // We already know the block is live
+  }
+
+  // Mark the variable known alive in this block
+  LInfo.AliveBlocks.set(BBNum);
+
+  assert(&BB != &F.getEntryBlock() && "Can't find reaching def for value");
+  WorkList.insert(WorkList.end(), pred_begin(&BB), pred_end(&BB));
 }
 
-bool LiveIRVariables::isBackEdgeTarget(BasicBlock &BB) {
-  for (pred_iterator PI = pred_begin(&BB),
-                     PE = pred_end(&BB); PI != PE; ++PI) {
-    if (BackEdges[DFSOrdering.idFor(*PI) - 1].test(DFSOrdering.idFor(&BB) - 1))
+const Instruction *
+LiveIRVariables::LivenessInfo::findKill(const BasicBlock *BB) {
+  for (unsigned i = 0, e = Kills.size(); i != e; ++i) {
+    if (Kills[i]->getParent() == BB) {
+      return Kills[i];
+    }
+  }
+  return NULL;
+}
+
+bool
+LiveIRVariables::LivenessInfo::isLiveIn(const Value &V, const BasicBlock &Def,
+                                        const BasicBlock &BB, unsigned BBNum) {
+  // V is live-through.
+  if (AliveBlocks.test(BBNum)) {
+    return true;
+  }
+
+  // Values defined in BB cannot be live in.
+  if (&Def == &BB) {
+    return false;
+  }
+
+  // V was not defined in BB, was it killed here?
+  return findKill(&BB);
+}
+
+bool
+LiveIRVariables::isLiveIn(const Value &V, const BasicBlock &BB) {
+  return getLivenessInfo(V).isLiveIn(V, getDefiningBlock(V),
+                                     BB, DFSOrdering.idFor(&BB) - 1);
+}
+
+bool
+LiveIRVariables::isLiveOut(const Value &V, const BasicBlock &BB) {
+  LiveIRVariables::LivenessInfo &LI = getLivenessInfo(V);
+
+  // Loop over all of the successors of the basic block, checking to see if
+  // the value is either live in the block, or if it is killed in the block.
+  SmallVector<const BasicBlock*, 8> OpSuccBlocks;
+  for (succ_const_iterator SI = succ_begin(&BB),
+       SE = succ_end(&BB); SI != SE; ++SI) {
+    const BasicBlock *SuccBB = *SI;
+
+    // Is it alive in this successor?
+    unsigned SuccIdx = DFSOrdering.idFor(SuccBB) - 1;
+    if (LI.AliveBlocks.test(SuccIdx))
       return true;
+    OpSuccBlocks.push_back(SuccBB);
   }
-  return false;
-}
 
-bool LiveIRVariables::isLiveOut(Value &V, BasicBlock &BB) {
-  BasicBlock &DefBB = getDefiningBlock(V);
-  if (&DefBB == &BB) {
-    // If the value is defined within this basic block, just look for any use
-    // outside it.
-    for (Value::use_iterator UI = V.use_begin(),
-                             UE = V.use_end(); UI != UE; ++UI) {
-      if (isa<Instruction>(*UI) && cast<Instruction>(*UI)->getParent() != &BB)
+  // Check to see if this value is live because there is a use in a successor
+  // that kills it.
+  switch (OpSuccBlocks.size()) {
+  case 1: {
+    const BasicBlock *SuccBB = OpSuccBlocks[0];
+    for (unsigned i = 0, e = LI.Kills.size(); i != e; ++i)
+      if (LI.Kills[i]->getParent() == SuccBB)
         return true;
-    }
-    return false;
+    break;
   }
-
-  DominatorTree &DT = getAnalysis<DominatorTree>();
-  if (!DT.properlyDominates(&DefBB, &BB))
-    return false;
-
-  unsigned BBID = DFSOrdering.idFor(&BB) - 1;
-  BitVector &BackEdges = ReachableBackEdges[BBID];
-  bool BBIsBackEdgeTarget = isBackEdgeTarget(BB);
-
-  for (int i = BackEdges.find_first(); i != -1; i = BackEdges.find_next(i)) {
-    BasicBlock &ReachableBB = *DFSOrdering[i + 1];
-
-    // Ignore back edge targets that leave the dominance tree of def(V) and
-    // reenter it.
-    if (!DT.properlyDominates(&DefBB, &ReachableBB))
-      continue;
-
-    BitVector &ReachableBlocks = ReducedReachability[i];
-    for (int j = ReachableBlocks.find_first(); j != -1;
-         j = ReachableBlocks.find_next(j)) {
-      if ((unsigned)j == BBID && j == i && !BBIsBackEdgeTarget)
-        continue;   // Skip trivial paths.
-      // FIXME: Precompute this to speed this up.
-      if (V.isUsedInBasicBlock(DFSOrdering[j + 1]))
+  case 2: {
+    const BasicBlock *SuccBB1 = OpSuccBlocks[0], *SuccBB2 = OpSuccBlocks[1];
+    for (unsigned i = 0, e = LI.Kills.size(); i != e; ++i)
+      if (LI.Kills[i]->getParent() == SuccBB1 ||
+          LI.Kills[i]->getParent() == SuccBB2)
         return true;
-    }
+    break;
   }
-
+  default:
+    std::sort(OpSuccBlocks.begin(), OpSuccBlocks.end());
+    for (unsigned i = 0, e = LI.Kills.size(); i != e; ++i)
+      if (std::binary_search(OpSuccBlocks.begin(), OpSuccBlocks.end(),
+                             LI.Kills[i]->getParent()))
+        return true;
+  }
   return false;
 }
 
 void LiveIRVariables::dump(Function &F, bool IncludeDead) {
+  dbgs() << "Function: " << F.getName() << "\n";
+  for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
+    unsigned BBNum = DFSOrdering.idFor(BBI) - 1;
+    dbgs() << "Basic Block " << BBNum << ":\n";
+    BBI->dump();
+  }
+
+  dbgs() << "Liveness:\n";
   for (Function::iterator BBAI = F.begin(),
                           BBAE = F.end(); BBAI != BBAE; ++BBAI) {
     for (BasicBlock::iterator II = BBAI->begin(),
