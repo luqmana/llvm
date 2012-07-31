@@ -73,47 +73,53 @@ LiveIRVariables::ComputeDFSOrdering(const Function &F) {
 
 void
 LiveIRVariables::ComputeLiveSets(const Function &F) {
-  // Calculate live variable information in depth first order on the
-  // CFG of the function. This guarantees that we will see the
-  // definition of a virtual register before its uses due to dominance
-  // properties of SSA (except for PHI nodes, which are treated as a
-  // special case).
+  // Calculate live variable information in depth first order on the CFG of the
+  // function. This guarantees that we will see the definition of a value before
+  // its uses due to dominance properties of SSA (except for PHI nodes, which
+  // are treated as a special case).
   for (df_iterator<const BasicBlock *> DI = df_begin(&F.getEntryBlock()),
-       DE = df_end(&F.getEntryBlock()); DI != DE; ++DI) {
+         DE = df_end(&F.getEntryBlock()); DI != DE; ++DI) {
     const BasicBlock &BB = **DI;
 
     // Loop over all of the instructions, processing them.
     for (BasicBlock::const_iterator II = BB.begin(),
-         IE = BB.end(); II != IE; ++II) {
+           IE = BB.end(); II != IE; ++II) {
       const Instruction &I = *II;
 
-      // Process all of the operands of the instruction, unless it is
-      // a PHI node. In this case, ONLY process the value defined by
-      // the PHI node, not any of the uses. They will be handled in
-      // other basic blocks.
+      // Process all of the operands of the instruction, unless it is a PHI
+      // node. In this case, ONLY process the value defined by the PHI node, not
+      // any of the uses. They will be handled in other basic blocks.
       if (!isa<PHINode>(&I)) {
         for (User::const_op_iterator OI = I.op_begin(),
-             OE = I.op_end(); OI != OE; ++OI) {
+               OE = I.op_end(); OI != OE; ++OI) {
           const Value &V = **OI;
 
-          if (isa<Instruction>(V) || isa<Argument>(V)) {
+          if (isa<Instruction>(&V) || isa<Argument>(&V)) {
             HandleUse(V, I);
           }
         }
       }
 
-      // Process value defined by instruction.
+      // Process the value defined by the instruction.
       HandleDef(I);
     }
+  }
+
+  // Perform post-processing on arguments to make sure they get marked live-in
+  // properly at the function entry block.
+  for (Function::const_arg_iterator AI = F.arg_begin(),
+         AE = F.arg_end(); AI != AE; ++AI) {
+    const Argument &A = *AI;
+    HandleArg(A);
   }
 }
 
 void
-LiveIRVariables::HandleUse(const Value &Op, const Instruction &I) {
+LiveIRVariables::HandleUse(const Value &V, const Instruction &I) {
   const BasicBlock &BB = *I.getParent();
   unsigned BBNum = DFSOrdering.idFor(&BB) - 1;
 
-  LivenessInfo &LInfo = getLivenessInfo(Op);
+  LivenessInfo &LInfo = getLivenessInfo(V);
 
   // Check to see if this basic block is one of the killing blocks.  If so,
   // remove it.
@@ -139,11 +145,11 @@ LiveIRVariables::HandleUse(const Value &Op, const Instruction &I) {
   // where there is a use in a PHI node that's a predecessor to the defining
   // block. We don't want to mark all predecessors as having the value "alive"
   // in this case.
-  if (&BB == &getDefiningBlock(Op)) return;
+  if (&BB == &getDefiningBlock(V) && !isa<Argument>(&V)) return;
 
-  // Add a new kill entry for this basic block. If this value is
-  // already marked as alive in this basic block, that means it is
-  // alive in at least one of the successor blocks, it's not a kill.
+  // Add a new kill entry for this basic block. If this value is already marked
+  // as alive in this basic block, that means it is alive in at least one of the
+  // successor blocks, it's not a kill.
   if (!LInfo.AliveBlocks.test(BBNum)) {
     LInfo.Kills.push_back(&I);
   }
@@ -151,7 +157,7 @@ LiveIRVariables::HandleUse(const Value &Op, const Instruction &I) {
   // Update all dominating blocks to mark them as "known live".
   for (const_pred_iterator PI = pred_begin(&BB),
          PE = pred_end(&BB); PI != PE; ++PI) {
-    MarkAliveInBlock(LInfo, getDefiningBlock(Op), **PI);
+    MarkAliveInBlock(LInfo, getDefiningBlock(V), **PI);
   }
 }
 
@@ -159,9 +165,32 @@ void
 LiveIRVariables::HandleDef(const Instruction &I) {
   LivenessInfo &LInfo = getLivenessInfo(I);
 
-  if (LInfo.AliveBlocks.empty())
+  if (LInfo.AliveBlocks.empty()) {
     // If value is not alive in any block, then defaults to dead.
     LInfo.Kills.push_back(&I);
+  }
+}
+
+void
+LiveIRVariables::HandleArg(const Argument &A) {
+  LivenessInfo &LInfo = getLivenessInfo(A);
+  const BasicBlock &Entry = getDefiningBlock(A);
+
+  // If argument A has any live-through blocks or any kills outside the entry
+  // block, mark the argument live-through at the entry block.
+  bool KilledOutsideEntry = false;
+  for (std::vector<const Instruction *>::iterator KI = LInfo.Kills.begin(),
+         KE = LInfo.Kills.end(); KI != KE; ++KI) {
+    if (&getDefiningBlock(**KI) != &Entry) {
+      KilledOutsideEntry = true;
+      break;
+    }
+  }
+
+  if (!LInfo.AliveBlocks.empty() || KilledOutsideEntry) {
+    unsigned BBNum = DFSOrdering.idFor(&Entry) - 1;
+    LInfo.AliveBlocks.set(BBNum);
+  }
 }
 
 LiveIRVariables::LivenessInfo &
@@ -244,8 +273,8 @@ LiveIRVariables::LivenessInfo::isLiveIn(const Value &V, const BasicBlock &Def,
     return true;
   }
 
-  // Values defined in BB cannot be live in.
-  if (&Def == &BB) {
+  // If value V is defined in BB it cannot be live-in, unless it is an argument.
+  if (&Def == &BB && !isa<Argument>(&V)) {
     return false;
   }
 
@@ -263,11 +292,11 @@ bool
 LiveIRVariables::isLiveOut(const Value &V, const BasicBlock &BB) {
   LiveIRVariables::LivenessInfo &LI = getLivenessInfo(V);
 
-  // Loop over all of the successors of the basic block, checking to see if
-  // the value is either live in the block, or if it is killed in the block.
+  // Loop over all of the successors of the basic block, checking to see if the
+  // value is either live in the block, or if it is killed in the block.
   SmallVector<const BasicBlock*, 8> OpSuccBlocks;
   for (succ_const_iterator SI = succ_begin(&BB),
-       SE = succ_end(&BB); SI != SE; ++SI) {
+         SE = succ_end(&BB); SI != SE; ++SI) {
     const BasicBlock *SuccBB = *SI;
 
     // Is it alive in this successor?
@@ -315,10 +344,10 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
 
   dbgs() << "Liveness:\n";
   for (Function::arg_iterator AI = F.arg_begin(),
-                              AE = F.arg_end(); AI != AE; ++AI) {
+         AE = F.arg_end(); AI != AE; ++AI) {
     dbgs() << "Value: " << *AI << "\n";
     for (Function::iterator BBI = F.begin(),
-                            BBE = F.end(); BBI != BBE; ++BBI) {
+           BBE = F.end(); BBI != BBE; ++BBI) {
       bool LiveIn = isLiveIn(*AI, *BBI), LiveOut = isLiveOut(*AI, *BBI);
       if (!LiveIn && !LiveOut && !IncludeDead)
         continue;
@@ -330,12 +359,12 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
   }
 
   for (Function::iterator BBAI = F.begin(),
-                          BBAE = F.end(); BBAI != BBAE; ++BBAI) {
+         BBAE = F.end(); BBAI != BBAE; ++BBAI) {
     for (BasicBlock::iterator II = BBAI->begin(),
-                              IE = BBAI->end(); II != IE; ++II) {
+           IE = BBAI->end(); II != IE; ++II) {
       dbgs() << "Value: " << *II << "\n";
       for (Function::iterator BBBI = F.begin(),
-                              BBBE = F.end(); BBBI != BBBE; ++BBBI) {
+             BBBE = F.end(); BBBI != BBBE; ++BBBI) {
         bool LiveIn = isLiveIn(*II, *BBBI), LiveOut = isLiveOut(*II, *BBBI);
         if (!LiveIn && !LiveOut && !IncludeDead)
           continue;

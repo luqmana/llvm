@@ -129,14 +129,18 @@ private:
   /// in the function F.
   void ComputeLiveSets(const Function &F);
 
-  /// HandleUse - Propagate the liveness information for the operand Op used by
+  /// HandleUse - Propagate the liveness information for the operand V used by
   /// instruction I.
-  void HandleUse(const Value &Op, const Instruction &I);
+  void HandleUse(const Value &V, const Instruction &I);
 
   /// HandleDef - Initialize the liveness information for the value defined by
   /// the instruction I. If no later instructions use I, then I will be
   /// considered dead.
   void HandleDef(const Instruction &I);
+
+  /// HandleArg - Post-processing step to ensure arguments are properly marked
+  /// live-in at the entry block if they are used anywhere in the function.
+  void HandleArg(const Argument &A);
 
   /// getLivenessInfo - Returns (creating if necessary) the liveness info entry
   /// for value V.
