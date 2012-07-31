@@ -58,7 +58,7 @@ LiveIRVariables::runOnFunction(Function &F) {
   ComputeDFSOrdering(F);
   ComputeLiveSets(F);
 
-  DEBUG(dump(F, false));
+  DEBUG(dump(F, true));
 
   return false;
 }
@@ -314,19 +314,35 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
   }
 
   dbgs() << "Liveness:\n";
+  for (Function::arg_iterator AI = F.arg_begin(),
+                              AE = F.arg_end(); AI != AE; ++AI) {
+    dbgs() << "Value: " << *AI << "\n";
+    for (Function::iterator BBI = F.begin(),
+                            BBE = F.end(); BBI != BBE; ++BBI) {
+      bool LiveIn = isLiveIn(*AI, *BBI), LiveOut = isLiveOut(*AI, *BBI);
+      if (!LiveIn && !LiveOut && !IncludeDead)
+        continue;
+      dbgs() << "  is " << (LiveIn ? "" : "NOT ") << "live-in ";
+      dbgs() << (LiveIn != LiveOut ? "but " : "and ");
+      dbgs() << (LiveOut ? "" : "NOT ") << "live-out at basic block ";
+      dbgs() << (DFSOrdering.idFor(&*BBI) - 1) << "\n";
+    }
+  }
+
   for (Function::iterator BBAI = F.begin(),
                           BBAE = F.end(); BBAI != BBAE; ++BBAI) {
     for (BasicBlock::iterator II = BBAI->begin(),
                               IE = BBAI->end(); II != IE; ++II) {
+      dbgs() << "Value: " << *II << "\n";
       for (Function::iterator BBBI = F.begin(),
                               BBBE = F.end(); BBBI != BBBE; ++BBBI) {
         bool LiveIn = isLiveIn(*II, *BBBI), LiveOut = isLiveOut(*II, *BBBI);
         if (!LiveIn && !LiveOut && !IncludeDead)
           continue;
-        dbgs() << "Value is " << (LiveIn ? "" : "NOT ") << "live-in ";
+        dbgs() << "  is " << (LiveIn ? "" : "NOT ") << "live-in ";
         dbgs() << (LiveIn != LiveOut ? "but " : "and ");
-        dbgs() << (LiveOut ? "" : "NOT ") << "live-out at ";
-        dbgs() << (DFSOrdering.idFor(&*BBBI) - 1) << ":\n" << *II << "\n";
+        dbgs() << (LiveOut ? "" : "NOT ") << "live-out at basic block ";
+        dbgs() << (DFSOrdering.idFor(&*BBBI) - 1) << "\n";
       }
     }
   }
