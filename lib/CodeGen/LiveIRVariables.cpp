@@ -112,6 +112,35 @@ LiveIRVariables::ComputeLiveSets(const Function &F) {
     const Argument &A = *AI;
     HandleArg(A);
   }
+
+  // Perform post-processing on returns to make sure they are not
+  // marked as killing values.
+  for (Function::const_iterator BBI = F.begin(),
+         BBE = F.end(); BBI != BBE; ++BBI) {
+    const BasicBlock &BB = *BBI;
+    const TerminatorInst *I = BB.getTerminator();
+
+    if (!isa<ReturnInst>(I)) {
+      continue;
+    }
+
+    for (User::const_op_iterator OI = I->op_begin(),
+           OE = I->op_end(); OI != OE; ++OI) {
+      const Value &V = **OI;
+      LivenessInfo &LInfo = getLivenessInfo(V);
+
+      for (unsigned i = 0; i < LInfo.Kills.size(); ++i) {
+        if (LInfo.Kills[i] == I) {
+          LInfo.Kills.erase(LInfo.Kills.begin() + i);
+          if (&getDefiningBlock(V) != &BB) {
+            unsigned BBNum = DFSOrdering.idFor(&BB) - 1;
+            LInfo.AliveBlocks.set(BBNum);
+          }
+          break;
+        }
+      }
+    }
+  }
 }
 
 void
@@ -145,6 +174,10 @@ LiveIRVariables::HandleUse(const Value &V, const Instruction &I) {
   // where there is a use in a PHI node that's a predecessor to the defining
   // block. We don't want to mark all predecessors as having the value "alive"
   // in this case.
+  //
+  // However, skip this check if V is an argument, because arguments aren't
+  // really defined in the entry block, and we still need to mark kills that
+  // occur there.
   if (&BB == &getDefiningBlock(V) && !isa<Argument>(&V)) return;
 
   // Add a new kill entry for this basic block. If this value is already marked
@@ -292,8 +325,32 @@ bool
 LiveIRVariables::isLiveOut(const Value &V, const BasicBlock &BB) {
   LiveIRVariables::LivenessInfo &LI = getLivenessInfo(V);
 
+  // Is it live-through in BB?
+  unsigned BBNum = DFSOrdering.idFor(&BB) - 1;
+  if (LI.AliveBlocks.test(BBNum)) {
+    return true;
+  }
+
+  // Otherwise V can only be live-out if defined here and used elsewhere.
+  if (&getDefiningBlock(V) != &BB) {
+    return false;
+  }
+
+  // If V is an argument to a return instruction in this block, then it won't
+  // appear to be killed here, and there won't be any successors who use it, but
+  // we still need to mark it live-out.
+  const TerminatorInst *TI = BB.getTerminator();
+  if (isa<ReturnInst>(TI)) {
+    for (User::const_op_iterator OI = TI->op_begin(),
+           OE = TI->op_end(); OI != OE; ++OI) {
+      if (&V == *OI) {
+        return true;
+      }
+    }
+  }
+
   // Loop over all of the successors of the basic block, checking to see if the
-  // value is either live in the block, or if it is killed in the block.
+  // value is either live-through in the block, or if it is killed in the block.
   SmallVector<const BasicBlock*, 8> OpSuccBlocks;
   for (succ_const_iterator SI = succ_begin(&BB),
          SE = succ_end(&BB); SI != SE; ++SI) {
@@ -334,6 +391,21 @@ LiveIRVariables::isLiveOut(const Value &V, const BasicBlock &BB) {
   return false;
 }
 
+void LiveIRVariables::LivenessInfo::dump() const {
+  dbgs() << "    Live-through in blocks: ";
+  for (SparseBitVector<>::iterator I = AliveBlocks.begin(),
+           E = AliveBlocks.end(); I != E; ++I)
+    dbgs() << *I << ", ";
+  dbgs() << "\n    Killed by:";
+  if (Kills.empty())
+    dbgs() << " No instructions.\n";
+  else {
+    for (unsigned i = 0, e = Kills.size(); i != e; ++i)
+      dbgs() << "\n      #" << i << ": " << *Kills[i];
+    dbgs() << "\n";
+  }
+}
+
 void LiveIRVariables::dump(Function &F, bool IncludeDead) {
   dbgs() << "Function: " << F.getName() << "\n";
   for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI) {
@@ -342,10 +414,15 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
     BBI->dump();
   }
 
-  dbgs() << "Liveness:\n";
   for (Function::arg_iterator AI = F.arg_begin(),
          AE = F.arg_end(); AI != AE; ++AI) {
     dbgs() << "Value: " << *AI << "\n";
+
+    dbgs() << "  LivenessInfo Table:\n";
+    LivenessInfo &LI = getLivenessInfo(*AI);
+    LI.dump();
+
+    dbgs() << "  API Calls:\n";
     for (Function::iterator BBI = F.begin(),
            BBE = F.end(); BBI != BBE; ++BBI) {
       bool LiveIn = isLiveIn(*AI, *BBI), LiveOut = isLiveOut(*AI, *BBI);
@@ -356,6 +433,7 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
       dbgs() << (LiveOut ? "" : "NOT ") << "live-out at basic block ";
       dbgs() << (DFSOrdering.idFor(&*BBI) - 1) << "\n";
     }
+    dbgs() << "\n";
   }
 
   for (Function::iterator BBAI = F.begin(),
@@ -363,6 +441,12 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
     for (BasicBlock::iterator II = BBAI->begin(),
            IE = BBAI->end(); II != IE; ++II) {
       dbgs() << "Value: " << *II << "\n";
+
+      dbgs() << "  LivenessInfo Table:\n";
+      LivenessInfo &LI = getLivenessInfo(*II);
+      LI.dump();
+
+      dbgs() << "  API Calls:\n";
       for (Function::iterator BBBI = F.begin(),
              BBBE = F.end(); BBBI != BBBE; ++BBBI) {
         bool LiveIn = isLiveIn(*II, *BBBI), LiveOut = isLiveOut(*II, *BBBI);
@@ -373,6 +457,7 @@ void LiveIRVariables::dump(Function &F, bool IncludeDead) {
         dbgs() << (LiveOut ? "" : "NOT ") << "live-out at basic block ";
         dbgs() << (DFSOrdering.idFor(&*BBBI) - 1) << "\n";
       }
+      dbgs() << "\n";
     }
   }
 }
