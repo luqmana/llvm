@@ -337,7 +337,7 @@ void LowerIntrinsics::AutomaticallyRootValue(AllocaInst &AI, Type *Ty,
 
   switch (Ty->getTypeID()) {
   case Type::PointerTyID: {
-    if (!cast<PointerType>(Ty)->getAddressSpace() == 1)
+    if (cast<PointerType>(Ty)->getAddressSpace() < 1)
       break;
 
     // Create the GEP, if necessary.
@@ -352,10 +352,16 @@ void LowerIntrinsics::AutomaticallyRootValue(AllocaInst &AI, Type *Ty,
     Instruction *GCRootArg = new BitCastInst(BaseInst, PtrTy);
     GCRootArg->insertAfter(BaseInst);
 
+    // Cast the addrspace of the root to i8* to make type-compatible with call.
+    Constant *AddressSpace =
+      ConstantInt::get(Type::getInt64Ty(C), cast<PointerType>(Ty)->getAddressSpace());
+    Constant *GCMetadataArg =
+      ConstantExpr::getIntToPtr(AddressSpace, Type::getInt8PtrTy(C));
+
     // Create an intrinsic call.
     Value *Args[2];
     Args[0] = GCRootArg;
-    Args[1] = ConstantPointerNull::get(Type::getInt8PtrTy(C));
+    Args[1] = GCMetadataArg;
     Function *GCRootFn = Intrinsic::getDeclaration(M, Intrinsic::gcroot);
     CallInst *Call = CallInst::Create(GCRootFn, Args);
     Call->insertAfter(GCRootArg);

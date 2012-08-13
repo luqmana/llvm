@@ -84,6 +84,7 @@ void GenericGCMetadataPrinter::writeSafePointInfo(AsmPrinter &AP,
                                                   GCFunctionInfo &FI,
                                                   unsigned Index) {
   const MCRegisterInfo &MRI = AP.OutStreamer.getContext().getRegisterInfo();
+  unsigned PtrSize = AP.TM.getTargetData()->getPointerSize();
 
   unsigned RegRootCount = 0, StackRootCount = 0;
   for (GCFunctionInfo::live_iterator LI = FI.live_begin(Index),
@@ -115,20 +116,68 @@ void GenericGCMetadataPrinter::writeSafePointInfo(AsmPrinter &AP,
   }
 
   // Write out the address spaces for all roots.
+  alignToPointer(AP);
   for (GCFunctionInfo::live_iterator LI = FI.live_begin(Index),
                                      LE = FI.live_end(Index); LI != LE; ++LI) {
     if (LI->Metadata->isNullValue()) {
-      AP.EmitInt8(0);
+      AP.EmitInt32(0);
       continue;
     }
 
-    assert(isa<GlobalVariable>(LI->Metadata) &&
-           "Generic GC printer requires global variable metadata!");
-    const Constant *Init =
+    uint64_t AddressSpace = 0;
+    if (isa<ConstantExpr>(LI->Metadata)) {
+      const ConstantExpr *ME = cast<ConstantExpr>(LI->Metadata);
+      assert(ME->isCast() && isa<ConstantInt>(ME->getOperand(0)));
+      AddressSpace = cast<ConstantInt>(ME->getOperand(0))->getZExtValue();
+    } else if (isa<GlobalVariable>(LI->Metadata)) {
+      const Constant *Init =
         cast<GlobalVariable>(LI->Metadata)->getInitializer();
-    assert(isa<ConstantInt>(Init) &&
-           "Generic GC printer requires metadata to be an integer!");
-    AP.EmitInt8(cast<ConstantInt>(Init)->getZExtValue());
+      assert(isa<ConstantInt>(Init) &&
+             "Generic GC printer requires metadata to be an integer!");
+      AddressSpace = cast<ConstantInt>(Init)->getZExtValue();
+    } else {
+      assert(false &&
+             "Generic GC printer requires constant or global metadata!");
+    }
+    AP.OutStreamer.EmitIntValue(AddressSpace, PtrSize, 0);
+  }
+
+  // Write out the metadata pointers for each addrspace.
+  for (GCFunctionInfo::live_iterator LI = FI.live_begin(Index),
+                                     LE = FI.live_end(Index); LI != LE; ++LI) {
+    if (LI->Metadata->isNullValue()) {
+      AP.OutStreamer.EmitIntValue(0, PtrSize, 0);
+      continue;
+    }
+
+    uint64_t AddressSpace = 0;
+    if (isa<ConstantExpr>(LI->Metadata)) {
+      const ConstantExpr *ME = cast<ConstantExpr>(LI->Metadata);
+      assert(ME->isCast() && isa<ConstantInt>(ME->getOperand(0)));
+      AddressSpace = cast<ConstantInt>(ME->getOperand(0))->getZExtValue();
+    } else if (isa<GlobalVariable>(LI->Metadata)) {
+      const Constant *Init =
+        cast<GlobalVariable>(LI->Metadata)->getInitializer();
+      assert(isa<ConstantInt>(Init) &&
+             "Generic GC printer requires metadata to be an integer!");
+      AddressSpace = cast<ConstantInt>(Init)->getZExtValue();
+    } else {
+      assert(false &&
+             "Generic GC printer requires constant or global metadata!");
+    }
+
+    // Don't emit metadata pointers for addrspace 1, which is for generic boxes.
+    if (AddressSpace <= 1) {
+      AP.OutStreamer.EmitIntValue(0, PtrSize, 0);
+      continue;
+    }
+
+    SmallString<128> MetadataName;
+    AP.Mang->getNameWithPrefix(MetadataName,
+                               "_gc_addrspace_metadata_" + Twine(AddressSpace));
+    MCSymbol *MetadataSym = AP.OutContext.GetOrCreateSymbol(MetadataName);
+
+    AP.OutStreamer.EmitSymbolValue(MetadataSym, PtrSize);
   }
 }
 
