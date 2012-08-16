@@ -371,12 +371,16 @@ void LowerIntrinsics::AutomaticallyRootValue(AllocaInst &AI, Type *Ty,
   case Type::StructTyID:
   case Type::ArrayTyID:
   case Type::VectorTyID: {
+    // Skip auto-rooting structs for because we explicitly root these
+    // by allocaing pointers on the stack.
+    /*
     SmallVector<Value *, 8> NewIndices(Indices.begin(), Indices.end());
     NewIndices.push_back(ConstantInt::get(Int32Ty, 0));
     for (unsigned i = 0; i < Ty->getNumContainedTypes(); ++i) {
       NewIndices[NewIndices.size() - 1] = ConstantInt::get(Int32Ty, i);
       AutomaticallyRootValue(AI, Ty->getContainedType(i), NewIndices);
     }
+    */
     break;
   }
 
