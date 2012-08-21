@@ -547,7 +547,8 @@ void LowerIntrinsics::InsertGCRegisterRoots(Function &F, GCStrategy &S) {
 
 bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
   InsertAutomaticGCRoots(F, S);
-  InsertGCRegisterRoots(F, S);
+  // FIXME: Turn this back on after fixing gcregroot in SelectionDAG.
+  //InsertGCRegisterRoots(F, S);
 
   bool LowerWr = !S.customWriteBarrier();
   bool LowerRd = !S.customReadBarrier();
