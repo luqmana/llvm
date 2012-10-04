@@ -1,6 +1,6 @@
 [submodule "projects/compiler-rt"]
         path = projects/compiler-rt
-        url = git://github.com/llvm-mirror/compiler-rt
+        url = git://github.com/brson/compiler-rt
 [submodule "tools/clang"]
         path = tools/clang
-        url = git://github.com/llvm-mirror/clang
+        url = git://github.com/brson/clang
