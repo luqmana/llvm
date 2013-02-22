@@ -240,6 +240,9 @@ protected:
 
   const Triple &getTargetTriple() const { return TargetTriple; }
 
+  bool isTargetAndroid() const {
+      return TargetTriple.getEnvironment() == Triple::Android; }
+  bool isTargetLinux() const { return TargetTriple.getOS() == Triple::Linux; }
   bool isTargetIOS() const { return TargetTriple.getOS() == Triple::IOS; }
   bool isTargetDarwin() const { return TargetTriple.isOSDarwin(); }
   bool isTargetNaCl() const {

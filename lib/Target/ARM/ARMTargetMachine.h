@@ -55,6 +55,10 @@ public:
   virtual TargetPassConfig *createPassConfig(PassManagerBase &PM);
 
   virtual bool addCodeEmitter(PassManagerBase &PM, JITCodeEmitter &MCE);
+  
+  virtual const ARMBaseInstrInfo *getInstrInfo() const {
+    llvm_unreachable("getInstrInfo not implemented");
+  }
 };
 
 /// ARMTargetMachine - ARM target machine.

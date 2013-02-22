@@ -23,11 +23,13 @@
 
 namespace llvm {
   class ARMSubtarget;
+  class ARMBaseTargetMachine;
 
 class Thumb1FrameLowering : public ARMFrameLowering {
 public:
-  explicit Thumb1FrameLowering(const ARMSubtarget &sti)
-    : ARMFrameLowering(sti) {
+  explicit Thumb1FrameLowering(const ARMBaseTargetMachine &tm,
+                               const ARMSubtarget &sti)
+    : ARMFrameLowering(tm, sti) {
   }
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
