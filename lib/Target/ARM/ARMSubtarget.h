@@ -263,6 +263,9 @@ public:
     return TargetTriple.getOS() == Triple::NaCl;
   }
   bool isTargetELF() const { return !isTargetDarwin(); }
+  bool isTargetAndroid() const {
+    return TargetTriple.getEnvironment() == Triple::Android;
+  }
 
   bool isAPCS_ABI() const { return TargetABI == ARM_ABI_APCS; }
   bool isAAPCS_ABI() const { return TargetABI == ARM_ABI_AAPCS; }
