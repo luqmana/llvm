@@ -1470,13 +1470,12 @@ void
 ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   const ARMSubtarget *ST = &MF.getTarget().getSubtarget<ARMSubtarget>();
 
- 
   // Doesn't support vararg function.
   if (MF.getFunction()->isVarArg())
     report_fatal_error("Segmented stacks do not support vararg functions.");
   // Doesn't support other than android.
   if (!ST->isTargetAndroid())
-    report_fatal_error("Segmented stacks not supported on this platfrom.");
+    report_fatal_error("Segmented statks not supported on this platfrom.");
   
   MachineBasicBlock &prologueMBB = MF.front();
   MachineFrameInfo* MFI = MF.getFrameInfo();
@@ -1527,9 +1526,9 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // push {SR0, SR1}
   AddDefaultPred(BuildMI(prevStackMBB, DL, TII.get(ARM::STMDB_UPD))
                  .addReg(ARM::SP, RegState::Define)
-                 .addReg(ARM::SP, RegState::Define))
-    .addReg(ScratchReg0, RegState::Define)
-    .addReg(ScratchReg1, RegState::Define);
+                 .addReg(ARM::SP))
+    .addReg(ScratchReg0)
+    .addReg(ScratchReg1);
 
   if (CompareStackPointer) {
     // mov SR1, sp
@@ -1589,8 +1588,8 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // push {lr} - Save return address of this function.
   AddDefaultPred(BuildMI(allocMBB, DL, TII.get(ARM::STMDB_UPD))
                  .addReg(ARM::SP, RegState::Define)
-                 .addReg(ARM::SP, RegState::Define))
-    .addReg(ARM::LR, RegState::Define);
+                 .addReg(ARM::SP))
+    .addReg(ARM::LR);
 
   // Call __morestack().
   BuildMI(allocMBB, DL, TII.get(ARM::BL))
@@ -1600,8 +1599,8 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // pop {lr}
   AddDefaultPred(BuildMI(allocMBB, DL, TII.get(ARM::LDMIA_UPD))
                  .addReg(ARM::SP, RegState::Define)
-                 .addReg(ARM::SP, RegState::Define))
-    .addReg(ARM::LR, RegState::Define);
+                 .addReg(ARM::SP))
+    .addReg(ARM::LR);
 
 
   // Restore SR0 and SR1 in case of __morestack() was called.
@@ -1610,9 +1609,9 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // pop {SR0, SR1}
   AddDefaultPred(BuildMI(allocMBB, DL, TII.get(ARM::LDMIA_UPD))
                  .addReg(ARM::SP, RegState::Define)
-                 .addReg(ARM::SP, RegState::Define))
-    .addReg(ScratchReg0, RegState::Define)
-    .addReg(ScratchReg1, RegState::Define);
+                 .addReg(ARM::SP))
+    .addReg(ScratchReg0)
+    .addReg(ScratchReg1);
 
   // Return from this function.
   AddDefaultPred(BuildMI(allocMBB, DL, TII.get(ARM::MOVr), ARM::PC)
@@ -1622,9 +1621,9 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // pop {SR0, SR1}
   AddDefaultPred(BuildMI(postStackMBB, DL, TII.get(ARM::LDMIA_UPD))
                  .addReg(ARM::SP, RegState::Define)
-                 .addReg(ARM::SP, RegState::Define))
-    .addReg(ScratchReg0, RegState::Define)
-    .addReg(ScratchReg1, RegState::Define);
+                 .addReg(ARM::SP))
+    .addReg(ScratchReg0)
+    .addReg(ScratchReg1);
 
   // Organizing MBB lists
   postStackMBB->addSuccessor(&prologueMBB);
