@@ -1742,7 +1742,7 @@ void LLVMSetGC(LLVMValueRef Fn, const char *Name);
  *
  * @see llvm::Function::addAttribute()
  */
-void LLVMAddFunctionAttr(LLVMValueRef Fn, LLVMAttribute PA);
+void LLVMAddFunctionAttr(LLVMValueRef Fn, unsigned PA, unsigned HighPA);
 
 /**
  * Add a target-dependent attribute to a fuction

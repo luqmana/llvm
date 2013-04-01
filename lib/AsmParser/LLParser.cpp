@@ -1165,6 +1165,7 @@ bool LLParser::ParseOptionalParamAttrs(AttrBuilder &B) {
 
     case lltok::kw_alignstack:
     case lltok::kw_alwaysinline:
+    case lltok::kw_fixedstacksegment:
     case lltok::kw_inlinehint:
     case lltok::kw_minsize:
     case lltok::kw_naked:

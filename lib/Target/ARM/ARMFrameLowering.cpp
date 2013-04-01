@@ -1513,7 +1513,16 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   MF.push_front(prevStackMBB);
 
   // The required stack size that is aligend to ARM constant critarion.
-  AlignedStackSize = AlignToARMConstant(MFI->getStackSize());
+  uint64_t StackSize = MFI->getStackSize();
+
+  // If the front-end requested a fixed stack segment size, use that.
+  const Function *Fn = MF.getFunction();
+  if (Fn->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                       Attribute::FixedStackSegment)) {
+    StackSize = MF.getTarget().Options.FixedStackSegmentSize;
+  }
+
+  AlignedStackSize = AlignToARMConstant(StackSize);
 
   // When the frame size is less than 256 we just compare the stack
   // boundary directly to the value of the stack pointer, per gcc.

@@ -204,6 +204,10 @@ namespace llvm {
     /// the value of this option.
     FPOpFusion::FPOpFusionMode AllowFPOpFusion;
 
+    /// The size of the stack segment to use for functions with fixed-size
+    /// stack segments, in bytes.
+    unsigned FixedStackSegmentSize;
+
     bool operator==(const TargetOptions &);
   };
 } // End llvm namespace

@@ -69,6 +69,7 @@ public:
     AlwaysInline,          ///< inline=always
     ByVal,                 ///< Pass structure by value
     Cold,                  ///< Marks function as being in a cold path.
+    FixedStackSegment,     ///< Fixed-size stack segment
     InlineHint,            ///< Source said inlining was desirable
     InReg,                 ///< Force argument to be passed in register
     MinSize,               ///< Function must be optimized for size first

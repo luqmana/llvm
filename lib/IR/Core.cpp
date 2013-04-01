@@ -1438,10 +1438,11 @@ void LLVMSetGC(LLVMValueRef Fn, const char *GC) {
     F->clearGC();
 }
 
-void LLVMAddFunctionAttr(LLVMValueRef Fn, LLVMAttribute PA) {
+void LLVMAddFunctionAttr(LLVMValueRef Fn, unsigned PA, unsigned HighPA) {
   Function *Func = unwrap<Function>(Fn);
   const AttributeSet PAL = Func->getAttributes();
-  AttrBuilder B(PA);
+  AttrBuilder B(((unsigned long long)PA) |
+                (((unsigned long long)HighPA) << 32));
   const AttributeSet PALnew =
     PAL.addAttributes(Func->getContext(), AttributeSet::FunctionIndex,
                       AttributeSet::get(Func->getContext(),
