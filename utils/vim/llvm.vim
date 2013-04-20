@@ -41,18 +41,18 @@ syn keyword llvmKeyword arm_aapcscc arm_apcscc asm atomic available_externally
 syn keyword llvmKeyword blockaddress byval c catch cc ccc cleanup coldcc common
 syn keyword llvmKeyword constant datalayout declare default define deplibs
 syn keyword llvmKeyword dllexport dllimport except extern_weak external fastcc
-syn keyword llvmKeyword filter gc global hidden initialexec inlinehint inreg
-syn keyword llvmKeyword intel_ocl_bicc inteldialect internal linker_private
-syn keyword llvmKeyword linker_private_weak linker_private_weak_def_auto
-syn keyword llvmKeyword linkonce linkonce_odr linkonce_odr_auto_hide
-syn keyword llvmKeyword localdynamic localexec minsize module monotonic
-syn keyword llvmKeyword msp430_intrcc naked nest noalias nocapture
-syn keyword llvmKeyword noimplicitfloat noinline nonlazybind noredzone noreturn
-syn keyword llvmKeyword nounwind optsize personality private protected
-syn keyword llvmKeyword ptx_device ptx_kernel readnone readonly release
-syn keyword llvmKeyword returns_twice section seq_cst sideeffect signext
-syn keyword llvmKeyword singlethread spir_func spir_kernel sret ssp sspreq
-syn keyword llvmKeyword sspstrong tail target thread_local to triple
+syn keyword llvmKeyword filter fixedstacksegment gc global hidden initialexec
+syn keyword llvmKeyword inlinehint inreg intel_ocl_bicc inteldialect internal
+syn keyword llvmKeyword linker_private linker_private_weak
+syn keyword llvmKeyword linker_private_weak_def_auto linkonce linkonce_odr
+syn keyword llvmKeyword linkonce_odr_auto_hide localdynamic localexec minsize
+syn keyword llvmKeyword module monotonic msp430_intrcc naked nest noalias
+syn keyword llvmKeyword nocapture noimplicitfloat noinline nonlazybind
+syn keyword llvmKeyword noredzone noreturn nounwind optsize personality private
+syn keyword llvmKeyword protected ptx_device ptx_kernel readnone readonly
+syn keyword llvmKeyword release returns_twice section seq_cst sideeffect
+syn keyword llvmKeyword signext singlethread spir_func spir_kernel sret ssp
+syn keyword llvmKeyword sspreq sspstrong tail target thread_local to triple
 syn keyword llvmKeyword unnamed_addr unordered uwtable volatile weak weak_odr
 syn keyword llvmKeyword x86_fastcallcc x86_stdcallcc x86_thiscallcc zeroext
 syn keyword llvmKeyword sanitize_thread sanitize_memory
