@@ -34,6 +34,8 @@ public:
 
   bool hasFP(const MachineFunction &MF) const;
 
+  void adjustForSegmentedStacks(MachineFunction &MF) const;
+
 protected:
   uint64_t estimateStackSize(const MachineFunction &MF) const;
 };
