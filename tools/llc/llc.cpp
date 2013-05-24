@@ -280,6 +280,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
   Options.EnableSegmentedStacks = SegmentedStacks;
   Options.UseInitArray = UseInitArray;
   Options.SSPBufferSize = SSPBufferSize;
+  Options.FixedStackSegmentSize = FixedStackSegmentSize;
 
   OwningPtr<TargetMachine>
     target(TheTarget->createTargetMachine(TheTriple.getTriple(),

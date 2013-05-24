@@ -224,4 +224,10 @@ cl::opt<unsigned>
 SSPBufferSize("stack-protector-buffer-size", cl::init(8),
               cl::desc("Lower bound for a buffer to be considered for "
                        "stack protection"));
+
+cl::opt<unsigned>
+FixedStackSegmentSize("fixed-stack-segment-size",
+                cl::desc("Size of the stack segment for fixed-size"
+                         " stack segments"),
+                cl::init(2*1024*1024));
 #endif

@@ -510,6 +510,7 @@ static TargetOptions GetTargetOptions() {
   Options.EnableSegmentedStacks = SegmentedStacks;
   Options.UseInitArray = UseInitArray;
   Options.SSPBufferSize = SSPBufferSize;
+  Options.FixedStackSegmentSize = FixedStackSegmentSize;
   return Options;
 }
 
