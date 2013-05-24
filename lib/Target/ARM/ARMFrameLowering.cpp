@@ -1467,7 +1467,7 @@ static uint32_t AlignToARMConstant(uint32_t Value) {
 static const uint64_t kSplitStackAvailable = 256;
 
 // Adjust function prologue to enable split stack.
-// Only support android.
+// Only support android and gnu eabi hardfp.
 void 
 ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   const ARMSubtarget *ST = &MF.getTarget().getSubtarget<ARMSubtarget>();
@@ -1475,8 +1475,8 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // Doesn't support vararg function.
   if (MF.getFunction()->isVarArg())
     report_fatal_error("Segmented stacks do not support vararg functions.");
-  // Doesn't support other than android.
-  if (!ST->isTargetAndroid())
+  // Doesn't support other than android or gnu eabi hardfp.
+  if (!ST->isTargetAndroid() && !ST->isTargetGNUEABIHF())
     report_fatal_error("Segmented statks not supported on this platfrom.");
   
   MachineBasicBlock &prologueMBB = MF.front();
@@ -1490,9 +1490,16 @@ ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   // leave the function.
   unsigned ScratchReg0 = ARM::R4;
   unsigned ScratchReg1 = ARM::R5;
-  // Use the last tls slot.
-  unsigned TlsOffset = 63;
+  unsigned TlsOffset;
   uint64_t AlignedStackSize;
+
+  if (ST->isTargetAndroid()) {
+    // Use the last tls slot.
+    TlsOffset = 63;
+  } else if (ST->isTargetGNUEABIHF()) {
+    // Use the private field of TCB head
+    TlsOffset = 1;
+  }
 
   MachineBasicBlock* prevStackMBB = MF.CreateMachineBasicBlock();
   MachineBasicBlock* postStackMBB = MF.CreateMachineBasicBlock();

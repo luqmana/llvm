@@ -282,6 +282,9 @@ public:
   bool isTargetAndroid() const {
     return TargetTriple.getEnvironment() == Triple::Android;
   }
+  bool isTargetGNUEABIHF() const {
+    return TargetTriple.getEnvironment() == Triple::GNUEABIHF;
+  }
 
   bool isAPCS_ABI() const { return TargetABI == ARM_ABI_APCS; }
   bool isAAPCS_ABI() const { return TargetABI == ARM_ABI_AAPCS; }
