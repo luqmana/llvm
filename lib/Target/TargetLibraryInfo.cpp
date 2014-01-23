@@ -580,6 +580,12 @@ static void initialize(TargetLibraryInfo &TLI, const Triple &T,
   // OS X or iOS.
   switch (T.getOS()) {
   case Triple::Linux:
+    //On android, exp10, exp10f, exp10l are not available on Bionic of Android
+    if (T.getEnvironment() == llvm::Triple::Android) {
+      TLI.setUnavailable(LibFunc::exp10);
+      TLI.setUnavailable(LibFunc::exp10f);
+      TLI.setUnavailable(LibFunc::exp10l);
+    }
     break;
   case Triple::MacOSX:
     TLI.setUnavailable(LibFunc::exp10l);
