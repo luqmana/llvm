@@ -2387,6 +2387,21 @@ private:
                                               LI.isVolatile(), LI.getName());
       if (LI.isVolatile())
         NewLI->setAtomic(LI.getOrdering(), LI.getSynchScope());
+
+      SmallVector<std::pair<unsigned, MDNode *>, 8> MD;
+      LI.getAllMetadata(MD);
+      // Try to preserve as much metadata as possible
+      for (const auto &MDPair : MD) {
+          unsigned ID = MDPair.first;
+          MDNode *N = MDPair.second;
+          switch (ID) {
+          case LLVMContext::MD_nonnull:
+              if (TargetTy->isPointerTy()) {
+                NewLI->setMetadata(ID, N);
+                break;
+              }
+          }
+      }
       V = NewLI;
 
       // If this is an integer load past the end of the slice (which means the

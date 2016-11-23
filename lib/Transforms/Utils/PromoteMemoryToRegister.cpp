@@ -387,6 +387,25 @@ static bool rewriteSingleStoreAlloca(AllocaInst *AI, AllocaInfo &Info,
     // code.
     if (ReplVal == LI)
       ReplVal = UndefValue::get(LI->getType());
+
+    // We're replacing this Load with another Load, so let's preserve metadata
+    if (isa<LoadInst>(ReplVal)) {
+      SmallVector<std::pair<unsigned, MDNode *>, 8> MD;
+      LI->getAllMetadata(MD);
+      // Try to preserve as much metadata as possible
+      for (const auto &MDPair : MD) {
+        unsigned ID = MDPair.first;
+        MDNode *N = MDPair.second;
+        switch (ID) {
+        case LLVMContext::MD_nonnull:
+          if (LI->getType()->isPointerTy()) {
+            ((LoadInst *) ReplVal)->setMetadata(ID, N);
+            break;
+          }
+        }
+      }
+    }
+
     LI->replaceAllUsesWith(ReplVal);
     if (AST && LI->getType()->isPointerTy())
       AST->deleteValue(LI);
@@ -939,6 +958,22 @@ NextIteration:
         continue;
 
       Value *V = IncomingVals[AI->second];
+      if (isa<LoadInst>(V)) {
+        SmallVector<std::pair<unsigned, MDNode *>, 8> MD;
+        LI->getAllMetadata(MD);
+        // Try to preserve as much metadata as possible
+        for (const auto &MDPair : MD) {
+          unsigned ID = MDPair.first;
+          MDNode *N = MDPair.second;
+          switch (ID) {
+          case LLVMContext::MD_nonnull:
+            if (LI->getType()->isPointerTy()) {
+              ((LoadInst *) V)->setMetadata(ID, N);
+              break;
+            }
+          }
+        }
+      }
 
       // Anything using the load now uses the current value.
       LI->replaceAllUsesWith(V);
